@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Provider Detail - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/services.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'services' });
+    const providerId = new URLSearchParams(location.search).get('id');
+    const isResident = auth.hasAnyRole('RESIDENT');
+
+    if (!providerId) {
+      pageEl.innerHTML = `<p>${i18n.t('noProviderSpecified')}</p>`;
+    } else {
+      pageEl.innerHTML = `<div id="provider-root">${loading.skeletonRows(3, 3)}</div>`;
+      loadProvider();
+    }
+
+    async function loadProvider() {
+      try {
+        const [provider, reviewsPage] = await Promise.all([
+          api.get(`/providers/${providerId}`),
+          api.get(`/providers/${providerId}/reviews`, { query: { size: 20 } }),
+        ]);
+        render(provider, reviewsPage.content);
+      } catch (e) {
+        loading.emptyState(document.getElementById('provider-root'), { icon: '🚫', title: i18n.t('unableToLoadProvider'), message: e.message });
+      }
+    }
+
+    function render(provider, reviews) {
+      const root = document.getElementById('provider-root');
+      root.innerHTML = `
+        <a href="/services.html" class="text-sm link">← ${i18n.t('backToServices')}</a>
+        <div class="card" style="margin-top:12px">
+          <div class="row-between">
+            <div class="row">
+              <div class="provider-logo" style="width:64px;height:64px;font-size:26px">${provider.businessName[0]}</div>
+              <div>
+                <h1 style="margin-bottom:4px">${provider.businessName} ${provider.verified ? `<span class="badge badge-success">${i18n.t('verifiedBadge')}</span>` : ''}</h1>
+                <div class="rating">★ ${provider.averageRating.toFixed(1)} <span class="text-muted text-sm">(${provider.reviewCount} ${i18n.t('reviewsCount')})</span></div>
+              </div>
+            </div>
+            ${isResident ? `<button class="btn btn-primary" id="request-service-btn">${i18n.t('requestServiceBtn')}</button>` : ''}
+          </div>
+          <hr/>
+          <p>${provider.bio || i18n.t('noDescriptionProvided')}</p>
+          <div class="row wrap" style="gap:6px;margin-top:10px">
+            ${provider.categories.map((c) => `<span class="badge badge-neutral">${i18n.enumLabel('ServiceCategory', c)}</span>`).join('')}
+          </div>
+          <p class="text-sm text-muted" style="margin-top:10px">${i18n.t('serviceAreaColon')} ${provider.serviceArea || i18n.t('notSpecified')}</p>
+        </div>
+
+        <div class="card" style="margin-top:20px">
+          <h4 style="margin-bottom:12px">${i18n.t('reviewsHeader')}</h4>
+          <div id="reviews-list">
+            ${reviews.length ? reviews.map((r) => `
+              <div class="review-item">
+                <div class="row-between">
+                  <strong class="text-sm">${r.authorName}</strong>
+                  <span class="review-stars">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+                </div>
+                <p class="text-sm text-secondary">${r.comment || ''}</p>
+                <span class="text-xs text-muted">${new Date(r.createdAt).toLocaleDateString()}</span>
+              </div>`).join('') : `<p class="text-sm text-muted">${i18n.t('noReviewsYet')}</p>`}
+          </div>
+        </div>
+      `;
+
+      if (isResident) {
+        document.getElementById('request-service-btn').addEventListener('click', () => {
+          modal.open({
+            title: i18n.t('requestServiceFrom', { name: provider.businessName }),
+            bodyHtml: `
+              <div class="field"><label>${i18n.t('categoryLabel')}</label>
+                <select class="input" id="req-category">${provider.categories.map((c) => `<option value="${c}">${i18n.enumLabel('ServiceCategory', c)}</option>`).join('')}</select>
+              </div>
+              <div class="field"><label>${i18n.t('describeWhatYouNeed')}</label><textarea class="input" id="req-description" style="min-height:100px"></textarea></div>
+            `,
+            actions: [
+              { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+              { label: i18n.t('sendRequest'), className: 'btn btn-primary', onClick: async (done) => {
+                  const description = document.getElementById('req-description').value.trim();
+                  if (!description) { toast.warning(i18n.t('pleaseDescribeWhatYouNeed')); return; }
+                  try {
+                    await api.post('/service-requests', {
+                      providerId: Number(providerId),
+                      category: document.getElementById('req-category').value,
+                      description,
+                    });
+                    toast.success(i18n.t('serviceRequestSent'));
+                    done();
+                    location.href = '/services.html';
+                  } catch (e) { toast.error(e.message); }
+                } },
+            ],
+          });
+        });
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: 100vh;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-lg) var(--spacing-md);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.sidebar-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 var(--spacing-sm) var(--spacing-lg);
+  font-weight: 800; font-size: 18px;
+}
+/* Base .mark: was previously scoped to ".sidebar-brand .mark" only, so every other usage
+   (login/register/landing page brand marks) got no box/sizing at all - just bare text. */
+.mark {
+  width: 32px; height: 32px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 800;
+}
+.mark-lg { width: 44px; height: 44px; border-radius: var(--radius-md); font-size: 20px; }
+.sidebar-brand .mark {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+}
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.sidebar-nav a {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--radius-md);
+  font-size: 14px; font-weight: 600; color: var(--color-text-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sidebar-nav a:hover { background: var(--color-surface-muted); color: var(--color-text-primary); }
+.sidebar-nav a.active { background: var(--color-primary-soft); color: var(--color-primary); }
+.sidebar-nav .nav-icon { width: 20px; text-align: center; }
+.sidebar-section-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--color-text-muted); padding: var(--spacing-md) 12px 6px;
+}
+.sidebar-footer { padding-top: var(--spacing-md); border-top: 1px solid var(--color-border); }
+
+/* ---------- Topbar ---------- */
+.topbar {
+  height: var(--topbar-height);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: flex; align-items: center; gap: var(--spacing-md);
+  padding: 0 var(--spacing-lg);
+  position: sticky; top: 0; z-index: 50;
+}
+/* .input sets width:100%, which a flex item with no explicit flex-basis resolves its flex-basis
+   from - so without flex-shrink:0 here this select claims ~all the topbar's width instead of
+   staying a compact dropdown, squeezing #global-search down to a sliver. */
+.topbar .community-select { min-width: 200px; width: auto; flex: 0 0 auto; }
+.topbar-search { flex: 1; max-width: 420px; }
+.topbar-actions { display: flex; align-items: center; gap: var(--spacing-sm); margin-left: auto; }
+.icon-btn {
+  position: relative;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-text-secondary);
+}
+.icon-btn:hover { background: var(--color-surface-muted); color: var(--color-text-primary); }
+.notif-dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-danger);
+  border: 2px solid var(--color-surface);
+}
+.user-menu-trigger { display: flex; align-items: center; gap: 8px; position: relative; }
+
+.mobile-menu-btn { display: none; }
+.sidebar-backdrop { display: none; }
+
+/* ---------- Main content ---------- */
+/* min-width: 0 overrides the grid item's default min-width: auto (= min-content of its
+   children), which otherwise stops this 1fr track from shrinking below its widest unbreakable
+   descendant and forces the whole page to overflow horizontally instead of wrapping. */
+.main-content { display: flex; flex-direction: column; min-height: 100vh; min-width: 0; }
+.page { padding: var(--spacing-lg); max-width: 1180px; width: 100%; margin: 0 auto; }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); flex-wrap: wrap; }
+.page-header h1 { margin-bottom: 4px; }
+
+.grid { display: grid; gap: var(--spacing-lg); }
+.grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+.stack { display: flex; flex-direction: column; gap: var(--spacing-md); }
+.row { display: flex; align-items: center; gap: var(--spacing-sm); }
+.row-between { display: flex; align-items: center; justify-content: space-between; }
+.wrap { flex-wrap: wrap; }
+
+.two-col {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+/* ---------- Public (landing/auth) layout ---------- */
+.public-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  max-width: 1180px; margin: 0 auto;
+  flex-wrap: wrap; row-gap: var(--spacing-sm);
+}
+.auth-split { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+.auth-visual {
+  background: linear-gradient(160deg, var(--color-primary), #1a3fb0 60%, var(--color-ai));
+  color: #fff;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: var(--spacing-xl);
+}
+.auth-form-side { display: flex; align-items: center; justify-content: center; padding: var(--spacing-xl); }
+.auth-form-card { width: 100%; max-width: 400px; }
+
+/* ---------- Bottom nav (mobile) ---------- */
+.bottom-nav {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  padding: 8px 0;
+  z-index: 60;
+}
+.bottom-nav-items { display: flex; justify-content: space-around; }
+.bottom-nav-items a { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; color: var(--color-text-muted); font-weight: 600; }
+.bottom-nav-items a.active { color: var(--color-primary); }

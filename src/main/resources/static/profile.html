@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profile - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="/js/ui/form.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'profile' });
+
+    pageEl.innerHTML = `
+      <div class="page-header"><div><h1 data-i18n="profile">${i18n.t('profile')}</h1><p>${i18n.t('manageAccountDetails')}</p></div></div>
+      <div class="two-col">
+        <div class="card">
+          <h4 style="margin-bottom:16px">${i18n.t('personalInformation')}</h4>
+          <form id="profile-form" novalidate>
+            <div class="grid grid-cols-2" style="gap:12px">
+              <div class="field"><label for="firstName">${i18n.t('firstName')}</label><input class="input" id="firstName" name="firstName" value="${currentUser.firstName}" required /></div>
+              <div class="field"><label for="lastName">${i18n.t('lastName')}</label><input class="input" id="lastName" name="lastName" value="${currentUser.lastName}" required /></div>
+            </div>
+            <div class="field"><label for="avatarUrl">${i18n.t('avatarUrlOptional')}</label>
+              <div class="row" style="gap:8px">
+                <input class="input" id="avatarUrl" name="avatarUrl" value="${currentUser.avatarUrl || ''}" style="flex:1" />
+                <input type="file" id="avatarFile" accept="image/*" hidden />
+                <button type="button" class="btn btn-outline btn-sm" id="avatar-upload-btn">${i18n.t('changePhoto')}</button>
+              </div>
+            </div>
+            <div class="field"><label for="preferredLanguage">${i18n.t('preferredLanguageLabel')}</label>
+              <select class="input" id="preferredLanguage" name="preferredLanguage">
+                <option value="EN" ${currentUser.preferredLanguage === 'EN' ? 'selected' : ''}>English</option>
+                <option value="AZ" ${currentUser.preferredLanguage === 'AZ' ? 'selected' : ''}>Azərbaycan dili</option>
+                <option value="RU" ${currentUser.preferredLanguage === 'RU' ? 'selected' : ''}>Русский</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary" id="profile-submit">${i18n.t('saveChanges')}</button>
+          </form>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h4 style="margin-bottom:6px">${i18n.t('accountLabel')}</h4>
+            <p class="text-sm text-secondary">${currentUser.email}</p>
+            <p class="text-sm text-secondary">${i18n.t('roleLabel')}: ${i18n.enumLabel('Role', currentUser.role)}</p>
+          </div>
+          <div class="card">
+            <h4 style="margin-bottom:16px">${i18n.t('changePasswordHeader')}</h4>
+            <form id="password-form" novalidate>
+              <div class="field"><label for="currentPassword">${i18n.t('currentPasswordLabel')}</label><input class="input" type="password" id="currentPassword" name="currentPassword" required /></div>
+              <div class="field"><label for="newPassword">${i18n.t('newPasswordLabel')}</label><input class="input" type="password" id="newPassword" name="newPassword" minlength="8" required /></div>
+              <button type="submit" class="btn btn-outline" id="password-submit">${i18n.t('updatePasswordBtn')}</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('avatar-upload-btn').addEventListener('click', () => {
+      document.getElementById('avatarFile').click();
+    });
+    document.getElementById('avatarFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        toast.info(i18n.t('uploadingPhoto'));
+        const uploaded = await api.uploadFile(file);
+        document.getElementById('avatarUrl').value = uploaded.url;
+      } catch (err) {
+        toast.error(i18n.t('uploadFailed') + err.message);
+      }
+    });
+
+    document.getElementById('profile-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('profile-submit');
+      formUtil.clearErrors(form);
+      loading.setButtonLoading(btn, true);
+      try {
+        const updated = await api.patch('/users/me', formUtil.toJson(form));
+        localStorage.setItem(window.YAXINAZ_CONFIG.userStorageKey, JSON.stringify({ ...currentUser, ...updated }));
+        if (updated.preferredLanguage !== i18n.current()) {
+          i18n.setLanguage(updated.preferredLanguage);
+          return;
+        }
+        toast.success(i18n.t('profileUpdated'));
+      } catch (err) {
+        if (err.validationErrors) formUtil.applyValidationErrors(form, err.validationErrors);
+        toast.error(err.message);
+      } finally {
+        loading.setButtonLoading(btn, false);
+      }
+    });
+
+    document.getElementById('password-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('password-submit');
+      formUtil.clearErrors(form);
+      loading.setButtonLoading(btn, true);
+      try {
+        await api.patch('/users/me/password', formUtil.toJson(form));
+        toast.success(i18n.t('passwordUpdated'));
+        form.reset();
+      } catch (err) {
+        if (err.validationErrors) formUtil.applyValidationErrors(form, err.validationErrors);
+        toast.error(err.message);
+      } finally {
+        loading.setButtonLoading(btn, false);
+      }
+    });
+  </script>
+</body>
+</html>

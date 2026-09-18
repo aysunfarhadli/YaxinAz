@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Services - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/services.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'services' });
+    const isProvider = currentUser.role === 'SERVICE_PROVIDER';
+    const CATEGORIES = ['PLUMBING','ELECTRICAL','CLEANING','HANDYMAN','LOCKSMITH','MOVING','APPLIANCE_REPAIR','PET_CARE','TUTORING','CAR_SERVICE','OTHER'];
+    const STATUS_FLOW = ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS', 'COMPLETED'];
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('localServicesTitle')}</h1><p>${i18n.t('localServicesSubtitle')}</p></div>
+        ${isProvider ? `<button class="btn btn-outline" id="manage-profile-btn">${i18n.t('manageProviderProfile')}</button>` : ''}
+      </div>
+      <div class="filter-bar">
+        <button class="btn btn-outline btn-sm active" data-tab="browse">${i18n.t('browseProviders')}</button>
+        <button class="btn btn-ghost btn-sm" data-tab="requests">${isProvider ? i18n.t('incomingRequests') : i18n.t('myRequests')}</button>
+      </div>
+      <div id="browse-tab">
+        <div class="filter-bar">
+          <select class="input" id="filter-category" style="width:auto" aria-label="Filter by category"><option value="">${i18n.t('allCategories')}</option>${CATEGORIES.map((c) => `<option value="${c}">${i18n.enumLabel('ServiceCategory', c)}</option>`).join('')}</select>
+          <label class="row text-sm"><input type="checkbox" id="filter-verified" /> ${i18n.t('verifiedOnly')}</label>
+        </div>
+        <div id="provider-list" class="grid grid-cols-3"></div>
+      </div>
+      <div id="requests-tab" hidden>
+        <div id="requests-list" class="stack"></div>
+      </div>
+    `;
+
+    document.querySelectorAll('[data-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-tab]').forEach((b) => b.className = 'btn btn-ghost btn-sm');
+        btn.className = 'btn btn-outline btn-sm active';
+        document.getElementById('browse-tab').hidden = btn.dataset.tab !== 'browse';
+        document.getElementById('requests-tab').hidden = btn.dataset.tab !== 'requests';
+        if (btn.dataset.tab === 'requests') loadRequests();
+      });
+    });
+
+    document.getElementById('filter-category').addEventListener('change', loadProviders);
+    document.getElementById('filter-verified').addEventListener('change', loadProviders);
+
+    async function loadProviders() {
+      const el = document.getElementById('provider-list');
+      el.innerHTML = loading.skeletonRows(3, 3);
+      try {
+        const page = await api.get('/providers', {
+          query: {
+            size: 24,
+            category: document.getElementById('filter-category').value || undefined,
+            verified: document.getElementById('filter-verified').checked ? true : undefined,
+          },
+        });
+        if (!page.content.length) {
+          loading.emptyState(el, { icon: '🧰', title: i18n.t('noProvidersFoundTitle'), message: i18n.t('tryDifferentFilter') });
+        } else {
+          el.innerHTML = page.content.map((p) => `
+            <a href="/provider-detail.html?id=${p.id}" class="card provider-card card-hover">
+              <div class="provider-logo">${p.businessName[0]}</div>
+              <div class="row" style="margin-bottom:4px">
+                <h4>${p.businessName}</h4>
+                ${p.verified ? `<span class="badge badge-success">${i18n.t('verifiedBadge')}</span>` : ''}
+              </div>
+              <div class="categories">${p.categories.map((c) => `<span class="badge badge-neutral">${i18n.enumLabel('ServiceCategory', c)}</span>`).join('')}</div>
+              <p class="text-sm text-secondary">${p.serviceArea || ''}</p>
+              <div class="rating" style="margin-top:8px">★ ${p.averageRating.toFixed(1)} <span class="text-muted text-sm">(${p.reviewCount} ${i18n.t('reviewsCount')})</span></div>
+            </a>`).join('');
+        }
+      } catch (e) { toast.error(i18n.t('unableToLoadProviders') + e.message); }
+    }
+    loadProviders();
+
+    async function loadRequests() {
+      const el = document.getElementById('requests-list');
+      el.innerHTML = loading.skeletonRows(3, 2);
+      try {
+        const endpoint = isProvider ? '/service-requests/provider' : '/service-requests/my';
+        const page = await api.get(endpoint, { query: { size: 20, sort: 'createdAt,desc' } });
+        if (!page.content.length) {
+          loading.emptyState(el, { icon: '🧾', title: i18n.t('noRequestsYetTitle'), message: isProvider ? i18n.t('incomingRequestsWillAppear') : i18n.t('requestServiceToSeeHere') });
+        } else {
+          el.innerHTML = page.content.map(renderRequest).join('');
+          wireRequestActions();
+        }
+      } catch (e) { toast.error(i18n.t('unableToLoadRequests') + e.message); }
+    }
+
+    function renderRequest(r) {
+      const statusIdx = STATUS_FLOW.indexOf(r.status);
+      const track = r.status === 'DECLINED' || r.status === 'CANCELLED'
+        ? `<span class="badge badge-danger">${i18n.enumLabel('ServiceRequestStatus', r.status)}</span>`
+        : `<div class="request-status-track">${STATUS_FLOW.map((s, i) => `<div class="step ${i < statusIdx ? 'done' : ''} ${i === statusIdx ? 'current' : ''}">${i18n.enumLabel('ServiceRequestStatus', s)}</div>`).join('')}</div>`;
+      return `
+        <div class="card" data-request-id="${r.id}">
+          <div class="row-between">
+            <div><strong>${i18n.enumLabel('ServiceCategory', r.category)}</strong> · ${isProvider ? r.customerName : r.providerBusinessName}</div>
+            <span class="text-xs text-muted">${new Date(r.requestedAt).toLocaleDateString()}</span>
+          </div>
+          <p class="text-sm" style="margin:8px 0">${r.description}</p>
+          ${track}
+          <div class="row" style="margin-top:10px">
+            ${isProvider && r.status === 'REQUESTED' ? `<button class="btn btn-primary btn-sm" data-action="ACCEPTED">${i18n.t('accept')}</button><button class="btn btn-outline btn-sm" data-action="DECLINED">${i18n.t('decline')}</button>` : ''}
+            ${isProvider && r.status === 'ACCEPTED' ? `<button class="btn btn-primary btn-sm" data-action="IN_PROGRESS">${i18n.t('startWork')}</button>` : ''}
+            ${isProvider && r.status === 'IN_PROGRESS' ? `<button class="btn btn-primary btn-sm" data-action="COMPLETED">${i18n.t('markCompleted')}</button>` : ''}
+            ${!isProvider && r.status === 'COMPLETED' ? `<button class="btn btn-ai btn-sm" data-review>${i18n.t('leaveAReview')}</button>` : ''}
+            ${!isProvider && (r.status === 'REQUESTED' || r.status === 'ACCEPTED') ? `<button class="btn btn-ghost btn-sm" data-action="CANCELLED">${i18n.t('cancelRequest')}</button>` : ''}
+          </div>
+        </div>`;
+    }
+
+    function wireRequestActions() {
+      document.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const requestId = btn.closest('[data-request-id]').dataset.requestId;
+          try {
+            await api.patch(`/service-requests/${requestId}/status`, { status: btn.dataset.action });
+            toast.success(i18n.t('requestUpdated'));
+            loadRequests();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+      document.querySelectorAll('[data-review]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const requestId = btn.closest('[data-request-id]').dataset.requestId;
+          let rating = 5;
+          const { close } = modal.open({
+            title: i18n.t('leaveAReview'),
+            bodyHtml: `
+              <div class="field"><label>${i18n.t('ratingLabel')}</label>
+                <select class="input" id="review-rating">${[5,4,3,2,1].map((n) => `<option value="${n}">${'★'.repeat(n)}${'☆'.repeat(5-n)} (${n})</option>`).join('')}</select>
+              </div>
+              <div class="field"><label>${i18n.t('commentLabel')}</label><textarea class="input" id="review-comment"></textarea></div>
+            `,
+            actions: [
+              { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+              { label: i18n.t('submitReview'), className: 'btn btn-primary', onClick: async (done) => {
+                  try {
+                    await api.post(`/service-requests/${requestId}/reviews`, {
+                      rating: Number(document.getElementById('review-rating').value),
+                      comment: document.getElementById('review-comment').value.trim() || null,
+                    });
+                    toast.success(i18n.t('reviewSubmittedThankYou'));
+                    done();
+                    loadRequests();
+                  } catch (e) { toast.error(e.message); }
+                } },
+            ],
+          });
+        });
+      });
+    }
+
+    if (isProvider) {
+      document.getElementById('manage-profile-btn').addEventListener('click', async () => {
+        let profile = null;
+        try { profile = await api.get('/providers/me').catch(() => null); } catch (e) { /* no profile yet */ }
+        modal.open({
+          title: profile ? i18n.t('updateProviderProfile') : i18n.t('createProviderProfile'),
+          bodyHtml: `
+            <div class="field"><label>${i18n.t('businessNameLabel')}</label><input class="input" id="pf-name" value="${profile?.businessName || ''}" /></div>
+            <div class="field"><label>${i18n.t('bioLabel')}</label><textarea class="input" id="pf-bio">${profile?.bio || ''}</textarea></div>
+            <div class="field"><label>${i18n.t('serviceAreaLabel')}</label><input class="input" id="pf-area" value="${profile?.serviceArea || ''}" /></div>
+            <div class="field"><label>${i18n.t('categoriesLabel')}</label>
+              <select class="input" id="pf-categories" multiple size="6">
+                ${CATEGORIES.map((c) => `<option value="${c}" ${profile?.categories?.includes(c) ? 'selected' : ''}>${i18n.enumLabel('ServiceCategory', c)}</option>`).join('')}
+              </select>
+            </div>
+          `,
+          actions: [
+            { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+            { label: i18n.t('save'), className: 'btn btn-primary', onClick: async (done) => {
+                const categories = Array.from(document.getElementById('pf-categories').selectedOptions).map((o) => o.value);
+                const payload = {
+                  businessName: document.getElementById('pf-name').value.trim(),
+                  bio: document.getElementById('pf-bio').value.trim() || null,
+                  serviceArea: document.getElementById('pf-area').value.trim() || null,
+                  categories,
+                };
+                try {
+                  if (profile) await api.patch('/providers/me', payload);
+                  else await api.post('/providers', payload);
+                  toast.success(i18n.t('providerProfileSaved'));
+                  done();
+                } catch (e) { toast.error(e.message); }
+              } },
+          ],
+        });
+      });
+    }
+  </script>
+</body>
+</html>

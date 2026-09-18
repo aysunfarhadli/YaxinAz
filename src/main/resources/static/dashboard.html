@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/dashboard.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const user = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'dashboard' });
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="greeting">${i18n.t('greetingGood')} ${greetingTime()}, ${user.firstName} 👋</h1>
+          <p class="greeting-sub" id="community-name">${i18n.t('loadingYourCommunity')}</p>
+        </div>
+        <a href="/issues.html?report=1" class="btn btn-primary">+ <span data-i18n="reportProblem">${i18n.t('reportProblem')}</span></a>
+      </div>
+
+      <div id="alert-slot"></div>
+
+      <div class="grid grid-cols-4" id="stat-cards">
+        ${loading.skeletonRows(4, 1)}
+      </div>
+
+      <div class="two-col" style="margin-top:24px">
+        <div class="stack">
+          <div class="ai-panel" id="ai-summary-panel">
+            <span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('aiCommunitySummary')}</span>
+            <div id="ai-summary-text" style="margin-top:10px">${loading.skeletonRows(1, 2)}</div>
+          </div>
+
+          <div class="card">
+            <div class="section-title"><h2>${i18n.t('recentIssues')}</h2><a href="/issues.html" class="link">${i18n.t('viewAll')}</a></div>
+            <div id="recent-issues">${loading.skeletonRows(3, 1)}</div>
+          </div>
+
+          <div class="card">
+            <div class="section-title"><h2>${i18n.t('communityFeed')}</h2><a href="/feed.html" class="link">${i18n.t('viewAll')}</a></div>
+            <div id="feed-preview">${loading.skeletonRows(2, 2)}</div>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="section-title"><h2>${i18n.t('upcomingEvents')}</h2><a href="/events.html" class="link">${i18n.t('viewAll')}</a></div>
+            <div id="events-preview">${loading.skeletonRows(2, 2)}</div>
+          </div>
+
+          <div class="card">
+            <div class="section-title"><h2>${i18n.t('recommendedServices')}</h2><a href="/services.html" class="link">${i18n.t('viewAll')}</a></div>
+            <div id="providers-preview">${loading.skeletonRows(2, 2)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    function greetingTime() {
+      const hour = new Date().getHours();
+      if (hour < 12) return i18n.t('greetingMorning');
+      if (hour < 18) return i18n.t('greetingAfternoon');
+      return i18n.t('greetingEvening');
+    }
+
+    function statusBadge(status) {
+      const map = { OPEN: 'neutral', ACKNOWLEDGED: 'primary', IN_PROGRESS: 'primary', WAITING_FOR_VENDOR: 'warning', RESOLVED: 'success', CLOSED: 'success', REJECTED: 'danger' };
+      return `<span class="badge badge-${map[status] || 'neutral'}">${i18n.enumLabel('IssueStatus', status)}</span>`;
+    }
+    function priorityBadge(priority) {
+      return `<span class="badge badge-priority-${priority.toLowerCase()}">${i18n.enumLabel('IssuePriority', priority)}</span>`;
+    }
+
+    async function loadDashboard() {
+      const communities = await api.get('/communities/mine').catch(() => []);
+      if (!communities.length) {
+        document.getElementById('community-name').textContent = i18n.t('notJoinedCommunity');
+        loading.emptyState(document.getElementById('stat-cards').parentElement, {
+          icon: '🏘️', title: i18n.t('joinCommunityTitle'),
+          message: i18n.t('joinCommunityMessage'),
+        });
+        return;
+      }
+      const communityId = appShell.currentCommunityId() || communities[0].id;
+      const community = communities.find((c) => String(c.id) === String(communityId)) || communities[0];
+      document.getElementById('community-name').textContent = community.name;
+
+      const [stats, issuesPage, postsPage, eventsPage, providersPage] = await Promise.all([
+        api.get(`/communities/${communityId}/statistics`).catch(() => null),
+        api.get(`/communities/${communityId}/issues`, { query: { size: 4, sort: 'createdAt,desc' } }).catch(() => ({ content: [] })),
+        api.get(`/communities/${communityId}/posts`, { query: { size: 3 } }).catch(() => ({ content: [] })),
+        api.get(`/communities/${communityId}/events`, { query: { size: 3, upcoming: true } }).catch(() => ({ content: [] })),
+        api.get('/providers', { query: { size: 3, verified: true } }).catch(() => ({ content: [] })),
+      ]);
+
+      if (stats) {
+        document.getElementById('stat-cards').innerHTML = `
+          <div class="stat-card animate-in"><span class="stat-label">${i18n.t('openIssues')}</span><span class="stat-value">${stats.openIssues}</span></div>
+          <div class="stat-card animate-in"><span class="stat-label">${i18n.t('resolvedThisWeek')}</span><span class="stat-value">${stats.resolvedThisWeek}</span></div>
+          <div class="stat-card animate-in"><span class="stat-label">${i18n.t('upcomingEvents')}</span><span class="stat-value">${eventsPage.totalElements ?? 0}</span></div>
+          <div class="stat-card animate-in"><span class="stat-label">${i18n.t('communityMembers')}</span><span class="stat-value">${stats.approvedMemberCount}</span></div>
+        `;
+
+        if (stats.criticalIssues > 0 || stats.escalatedIssues > 0) {
+          document.getElementById('alert-slot').innerHTML = `
+            <div class="alert-banner">
+              ⚠ ${i18n.t('alertNeedsAttention', { critical: stats.criticalIssues, escalated: stats.escalatedIssues })}
+              <a href="/issues.html?priority=CRITICAL" class="link" style="margin-left:auto">${i18n.t('reviewNow')}</a>
+            </div>`;
+        }
+
+        try {
+          const summary = await api.get(`/communities/${communityId}/summary`);
+          document.getElementById('ai-summary-text').textContent = summary.summary;
+        } catch (e) {
+          document.getElementById('ai-summary-text').textContent = i18n.t('aiUnavailableShort');
+        }
+      } else {
+        document.getElementById('stat-cards').innerHTML = `<p class="text-muted">${i18n.t('unableToLoadStats')}</p>`;
+      }
+
+      const issuesEl = document.getElementById('recent-issues');
+      if (issuesPage.content.length) {
+        issuesEl.innerHTML = issuesPage.content.map((issue) => `
+          <a href="/issue-detail.html?id=${issue.id}" class="issue-mini-item" style="display:flex">
+            <div style="flex:1">
+              <div class="font-semibold text-sm">${issue.title}</div>
+              <div class="text-xs text-muted">${issue.buildingOrLocation || issue.category}</div>
+            </div>
+            <div class="row">${priorityBadge(issue.priority)}${statusBadge(issue.status)}</div>
+          </a>`).join('');
+      } else {
+        loading.emptyState(issuesEl, { icon: '✅', title: i18n.t('noIssuesYetTitle'), message: i18n.t('noIssuesYetMessage') });
+      }
+
+      const feedEl = document.getElementById('feed-preview');
+      if (postsPage.content.length) {
+        feedEl.innerHTML = postsPage.content.map((post) => `
+          <div class="feed-preview-item">
+            <span class="avatar">${post.authorName.split(' ').map((n) => n[0]).join('')}</span>
+            <div style="flex:1">
+              <div class="text-sm"><strong>${post.authorName}</strong> ${post.title ? '· ' + post.title : ''}</div>
+              <div class="text-sm text-secondary">${post.content.slice(0, 90)}${post.content.length > 90 ? '...' : ''}</div>
+            </div>
+          </div>`).join('');
+      } else {
+        loading.emptyState(feedEl, { icon: '📰', title: i18n.t('noPostsYetTitle'), message: i18n.t('noPostsYetDashboardMessage') });
+      }
+
+      const eventsEl = document.getElementById('events-preview');
+      if (eventsPage.content.length) {
+        eventsEl.innerHTML = eventsPage.content.map((ev) => `
+          <a href="/events.html" class="event-mini-item" style="display:flex">
+            <div class="event-date-badge">
+              <span class="month">${i18n.shortMonth(new Date(ev.startTime))}</span>
+              <span class="day">${new Date(ev.startTime).getDate()}</span>
+            </div>
+            <div style="flex:1">
+              <div class="font-semibold text-sm">${ev.title}</div>
+              <div class="text-xs text-muted">${ev.location || ''}</div>
+            </div>
+          </a>`).join('');
+      } else {
+        loading.emptyState(eventsEl, { icon: '📅', title: i18n.t('noEventsYetTitle'), message: i18n.t('noEventsYetMessage') });
+      }
+
+      const providersEl = document.getElementById('providers-preview');
+      if (providersPage.content.length) {
+        providersEl.innerHTML = providersPage.content.map((p) => `
+          <a href="/provider-detail.html?id=${p.id}" class="service-mini-item" style="display:flex">
+            <span class="avatar" style="background:var(--color-secondary-soft);color:var(--color-secondary)">${p.businessName[0]}</span>
+            <div style="flex:1">
+              <div class="font-semibold text-sm">${p.businessName} ${p.verified ? '✓' : ''}</div>
+              <div class="text-xs text-muted">${p.categories.join(', ')}</div>
+            </div>
+            <div class="text-sm font-semibold">★ ${p.averageRating.toFixed(1)}</div>
+          </a>`).join('');
+      } else {
+        loading.emptyState(providersEl, { icon: '🧰', title: i18n.t('noProvidersYetTitle'), message: i18n.t('noProvidersYetMessage') });
+      }
+    }
+
+    loadDashboard().catch((e) => toast.error(i18n.t('unableToLoadDashboard') + e.message));
+  </script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Search - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: '' });
+    const params = new URLSearchParams(location.search);
+    const initialQuery = params.get('q') || '';
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('searchTitle')}</h1><p>${i18n.t('searchSubtitle')}</p></div>
+      </div>
+      <div class="row" style="max-width:600px;align-items:flex-start;gap:8px">
+        <div class="field" style="flex:1;margin-bottom:0">
+          <input class="input" id="search-input" value="${initialQuery}" placeholder="${i18n.t('searchPlaceholder')}" aria-label="Search everything" />
+        </div>
+        <button class="btn btn-outline" id="smart-search-btn" title="${i18n.t('smartSearchTitleAttr')}">
+          <span class="ai-spark">✨</span> ${i18n.t('smartSearchBtn')}
+        </button>
+      </div>
+      <div id="ai-search-note" style="margin-top:10px"></div>
+      <div id="search-results" class="stack" style="margin-top:16px"></div>
+    `;
+
+    const SECTIONS = [
+      { key: 'issues', label: i18n.t('issues'), href: (item) => `/issue-detail.html?id=${item.id}` },
+      { key: 'posts', label: i18n.t('sectionCommunityPosts'), href: () => `/feed.html` },
+      { key: 'events', label: i18n.t('eventsTitle'), href: () => `/events.html` },
+      { key: 'lostFoundItems', label: i18n.t('lostFound'), href: () => `/lostfound.html` },
+      { key: 'providers', label: i18n.t('sectionServiceProviders'), href: (item) => `/provider-detail.html?id=${item.id}` },
+    ];
+
+    async function runSearch(q, useAi = false) {
+      const resultsEl = document.getElementById('search-results');
+      const noteEl = document.getElementById('ai-search-note');
+      noteEl.innerHTML = '';
+      if (!q || q.trim().length < 2) {
+        loading.emptyState(resultsEl, { icon: '🔍', title: i18n.t('startTypingToSearch'), message: i18n.t('enterAtLeast2Chars') });
+        return;
+      }
+      resultsEl.innerHTML = loading.skeletonRows(3, 2);
+      const smartBtn = document.getElementById('smart-search-btn');
+      if (useAi) loading.setButtonLoading(smartBtn, true);
+      try {
+        const communityId = await appShell.ensureCommunityId();
+        const results = await api.get('/search', {
+          query: { q, communityId: communityId || undefined, useAi: useAi || undefined, lang: useAi ? i18n.current() : undefined },
+        });
+        if (results.aiProvider) {
+          noteEl.innerHTML = results.aiProvider === 'MOCK'
+            ? `<span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('smartSearchBtn')}</span> <span class="text-xs text-muted">${i18n.t('aiUnavailableFallbackUsed')}</span>`
+            : `<span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('smartSearchUnderstood')}</span>`;
+        }
+        const sections = SECTIONS.map((s) => ({ ...s, items: results[s.key] || [] })).filter((s) => s.items.length);
+        if (!sections.length) {
+          loading.emptyState(resultsEl, { icon: '🔍', title: i18n.t('noResultsFoundTitle'), message: i18n.t('nothingMatched', { q }) });
+          return;
+        }
+        resultsEl.innerHTML = sections.map((s) => `
+          <div class="card">
+            <h4 style="margin-bottom:10px">${s.label}</h4>
+            ${s.items.map((item) => `
+              <a href="${s.href(item)}" class="row" style="padding:8px 0;border-bottom:1px solid var(--color-border)">
+                <div>
+                  <div class="font-semibold text-sm">${item.title}</div>
+                  <div class="text-sm text-secondary">${item.snippet || ''}</div>
+                </div>
+              </a>`).join('')}
+          </div>`).join('');
+      } catch (e) {
+        toast.error((useAi ? i18n.t('smartSearchFailed') : i18n.t('searchFailed')) + e.message);
+      } finally {
+        if (useAi) loading.setButtonLoading(smartBtn, false);
+      }
+    }
+
+    let debounceTimer;
+    const searchInput = document.getElementById('search-input');
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => runSearch(e.target.value), 350);
+    });
+
+    document.getElementById('smart-search-btn').addEventListener('click', () => {
+      clearTimeout(debounceTimer);
+      runSearch(searchInput.value, true);
+    });
+
+    if (initialQuery) runSearch(initialQuery);
+    else loading.emptyState(document.getElementById('search-results'), { icon: '🔍', title: i18n.t('startTypingToSearch'), message: i18n.t('searchEmptyStateMessage') });
+  </script>
+</body>
+</html>

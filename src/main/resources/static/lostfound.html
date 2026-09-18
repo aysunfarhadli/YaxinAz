@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lost & Found - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/community.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'lostfound' });
+    let communityId = null;
+    const isAdmin = auth.hasAnyRole('COMMUNITY_ADMIN', 'PLATFORM_ADMIN');
+
+    const STATUS_OPTIONS = { LOST: ['ACTIVE', 'CLOSED'], FOUND: ['ACTIVE', 'CLAIMED', 'RETURNED', 'CLOSED'] };
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('lostFound')}</h1><p>${i18n.t('lostFoundSubtitle')}</p></div>
+        <button class="btn btn-primary" id="new-item-btn">+ ${i18n.t('reportItemBtn')}</button>
+      </div>
+      <div class="filter-bar">
+        <select class="input" id="filter-type" style="width:auto" aria-label="Filter by type">
+          <option value="">${i18n.t('allLabel')}</option><option value="LOST">${i18n.t('lostLabel')}</option><option value="FOUND">${i18n.t('foundLabel')}</option>
+        </select>
+        <select class="input" id="filter-status" style="width:auto" aria-label="Filter by status">
+          <option value="">${i18n.t('anyStatus')}</option><option value="ACTIVE">${i18n.t('statusActive')}</option><option value="CLAIMED">${i18n.t('statusClaimed')}</option><option value="RETURNED">${i18n.t('statusReturned')}</option><option value="CLOSED">${i18n.t('statusClosed')}</option>
+        </select>
+      </div>
+      <div id="lf-list" class="grid grid-cols-3"></div>
+    `;
+
+    document.getElementById('lf-list').innerHTML = loading.skeletonRows(3, 3);
+
+    async function initCommunity() {
+      communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('lf-list'), { icon: '🏘️', title: i18n.t('noCommunitySelected'), message: i18n.t('joinCommunityFirst') });
+        return;
+      }
+      loadItems();
+    }
+    initCommunity();
+
+    ['filter-type', 'filter-status'].forEach((id) => document.getElementById(id).addEventListener('change', loadItems));
+
+    async function loadItems() {
+      const query = {
+        size: 30,
+        type: document.getElementById('filter-type').value || undefined,
+        status: document.getElementById('filter-status').value || undefined,
+      };
+      try {
+        const page = await api.get(`/communities/${communityId}/lost-found`, { query });
+        const el = document.getElementById('lf-list');
+        if (!page.content.length) {
+          loading.emptyState(el, { icon: '🔎', title: i18n.t('noItemsFoundTitle'), message: i18n.t('noItemsFoundMessage') });
+        } else {
+          el.innerHTML = page.content.map(renderItem).join('');
+          wireItemActions();
+        }
+      } catch (e) { toast.error(i18n.t('unableToLoadItems') + e.message); }
+    }
+
+    function renderItem(item) {
+      return `
+        <div class="card lostfound-card" data-item-id="${item.id}">
+          ${item.imageUrl ? `<img src="${item.imageUrl}" alt="${item.title}" />` : `<div class="no-image">${i18n.t('noPhoto')}</div>`}
+          <div class="row" style="margin-bottom:6px">
+            <span class="badge badge-${item.type === 'LOST' ? 'danger' : 'success'}">${i18n.enumLabel('LostFoundType', item.type)}</span>
+            <span class="badge badge-neutral">${i18n.enumLabel('LostFoundStatus', item.status)}</span>
+          </div>
+          <h4>${item.title}</h4>
+          <p class="text-sm text-secondary">${item.description || ''}</p>
+          <p class="text-xs text-muted" style="margin-top:6px">${item.location || i18n.t('noLocationShort')} · ${i18n.t('reportedBy')} ${item.reporterName}</p>
+          ${(item.createdBy === currentUser.id || isAdmin) && item.status !== 'CLOSED' ? `
+            <select class="input status-update" data-id="${item.id}" style="margin-top:10px" aria-label="Update item status">
+              <option value="">${i18n.t('updateStatusPlaceholder')}</option>
+              ${STATUS_OPTIONS[item.type].filter((s) => s !== item.status).map((s) => `<option value="${s}">${i18n.enumLabel('LostFoundStatus', s)}</option>`).join('')}
+            </select>` : ''}
+        </div>`;
+    }
+
+    function wireItemActions() {
+      document.querySelectorAll('.status-update').forEach((select) => {
+        select.addEventListener('change', async () => {
+          if (!select.value) return;
+          try {
+            await api.patch(`/communities/${communityId}/lost-found/${select.dataset.id}/status`, { status: select.value });
+            toast.success(i18n.t('statusUpdated'));
+            loadItems();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+    }
+
+    document.getElementById('new-item-btn').addEventListener('click', () => {
+      if (!communityId) { toast.warning(i18n.t('joinCommunityFirst')); return; }
+      modal.open({
+        title: i18n.t('reportLostFoundTitle'),
+        bodyHtml: `
+          <div class="field"><label>${i18n.t('typeLabel')}</label>
+            <select class="input" id="item-type"><option value="LOST">${i18n.t('lostLabel')}</option><option value="FOUND">${i18n.t('foundLabel')}</option></select>
+          </div>
+          <div class="field"><label>${i18n.t('titleLabel')}</label><input class="input" id="item-title" placeholder="${i18n.t('lostFoundTitlePlaceholder')}" /></div>
+          <div class="field"><label>${i18n.t('descriptionLabel')}</label><textarea class="input" id="item-description"></textarea></div>
+          <div class="field"><label>${i18n.t('locationLabel')}</label><input class="input" id="item-location" /></div>
+          <div class="field"><label for="item-photo">${i18n.t('photoOptionalLabel')}</label><input class="input" type="file" id="item-photo" accept="image/*" /></div>
+        `,
+        actions: [
+          { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+          { label: i18n.t('submit'), className: 'btn btn-primary', onClick: async (done) => {
+              const title = document.getElementById('item-title').value.trim();
+              if (!title) { toast.warning(i18n.t('pleaseAddTitle')); return; }
+              try {
+                const photoFile = document.getElementById('item-photo').files[0];
+                let imageUrl = null;
+                if (photoFile) {
+                  toast.info(i18n.t('uploadingPhoto'));
+                  const uploaded = await api.uploadFile(photoFile);
+                  imageUrl = uploaded.url;
+                }
+                await api.post(`/communities/${communityId}/lost-found`, {
+                  type: document.getElementById('item-type').value,
+                  title, description: document.getElementById('item-description').value.trim() || null,
+                  location: document.getElementById('item-location').value.trim() || null,
+                  imageUrl,
+                });
+                toast.success(i18n.t('itemReported'));
+                done();
+                loadItems();
+              } catch (e) { toast.error(e.message); }
+            } },
+        ],
+      });
+    });
+  </script>
+</body>
+</html>

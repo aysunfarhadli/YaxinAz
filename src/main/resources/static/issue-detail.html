@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Issue Detail - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/issue.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'issues' });
+    const issueId = new URLSearchParams(location.search).get('id');
+    const isAdmin = auth.hasAnyRole('COMMUNITY_ADMIN', 'PLATFORM_ADMIN');
+
+    const STATUS_TRANSITIONS = {
+      OPEN: ['ACKNOWLEDGED', 'REJECTED'],
+      ACKNOWLEDGED: ['IN_PROGRESS', 'REJECTED'],
+      IN_PROGRESS: ['WAITING_FOR_VENDOR', 'RESOLVED'],
+      WAITING_FOR_VENDOR: ['IN_PROGRESS'],
+      RESOLVED: ['CLOSED', 'OPEN'],
+      CLOSED: [], REJECTED: [],
+    };
+    const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+
+    function statusBadge(status) {
+      const map = { OPEN: 'neutral', ACKNOWLEDGED: 'primary', IN_PROGRESS: 'primary', WAITING_FOR_VENDOR: 'warning', RESOLVED: 'success', CLOSED: 'success', REJECTED: 'danger' };
+      return `<span class="badge badge-${map[status] || 'neutral'}">${i18n.enumLabel('IssueStatus', status)}</span>`;
+    }
+    function priorityBadge(priority) {
+      return `<span class="badge badge-priority-${priority.toLowerCase()}">${i18n.enumLabel('IssuePriority', priority)}</span>`;
+    }
+    function timeAgo(iso) {
+      const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (seconds < 60) return i18n.t('justNow');
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return i18n.t('minutesAgo', { n: minutes });
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return i18n.t('hoursAgo', { n: hours });
+      return i18n.t('daysAgo', { n: Math.floor(hours / 24) });
+    }
+
+    if (!issueId) {
+      pageEl.innerHTML = `<p>${i18n.t('noIssueSpecified')}</p>`;
+    } else {
+      pageEl.innerHTML = `<div id="issue-root">${loading.skeletonRows(4, 2)}</div>`;
+      loadIssue();
+    }
+
+    let issueData = null;
+
+    async function loadIssue() {
+      try {
+        issueData = await api.get(`/issues/${issueId}`);
+        render();
+        loadTimeline();
+        loadComments();
+      } catch (e) {
+        loading.emptyState(document.getElementById('issue-root'), {
+          icon: '🚫', title: i18n.t('unableToLoadIssueTitle'), message: e.message,
+        });
+      }
+    }
+
+    function render() {
+      const issue = issueData;
+      const root = document.getElementById('issue-root');
+      root.innerHTML = `
+        <a href="/issues.html" class="text-sm link">← ${i18n.t('backToIssues')}</a>
+        <div class="card" style="margin-top:12px">
+          <div class="issue-hero">
+            <div>
+              <h1>${issue.title}</h1>
+              <p class="text-sm text-secondary">${issue.buildingOrLocation || i18n.t('noLocationSpecified')} · ${i18n.t('reportedBy')} ${issue.reporterName} · ${timeAgo(issue.createdAt)}</p>
+              <div class="issue-flags">
+                ${priorityBadge(issue.priority)}
+                ${statusBadge(issue.status)}
+                ${issue.stale ? `<span class="badge badge-warning">${i18n.t('staleLabel')}</span>` : ''}
+                ${issue.escalated ? `<span class="badge badge-danger">${i18n.t('escalatedLabel')}</span>` : ''}
+              </div>
+            </div>
+            <div class="support-cta">
+              <button class="btn btn-ai" id="support-btn">🙋 ${i18n.t('iHaveThisProblemToo')} (${issue.supportCount})</button>
+            </div>
+          </div>
+
+          <hr/>
+          <h4>${i18n.t('descriptionLabel')}</h4>
+          <p>${issue.description}</p>
+
+          ${issue.aiSummary ? `
+          <div class="ai-panel" style="margin-top:16px">
+            <span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('aiSummaryLabel')}</span>
+            <p style="margin-top:8px">${issue.aiSummary}</p>
+          </div>` : ''}
+
+          ${issue.imageUrl ? `<img src="${issue.imageUrl}" alt="Issue photo" style="margin-top:16px;border-radius:var(--radius-md);max-height:320px;object-fit:cover" />` : ''}
+
+          ${isAdmin ? `
+          <div class="card card-compact" style="margin-top:20px;background:var(--color-surface-muted)">
+            <h4 style="margin-bottom:10px">${i18n.t('adminActions')}</h4>
+            <div class="row wrap">
+              <select class="input" id="status-select" style="width:auto">
+                <option value="">${i18n.t('changeStatusPlaceholder')}</option>
+                ${(STATUS_TRANSITIONS[issue.status] || []).map((s) => `<option value="${s}">${i18n.enumLabel('IssueStatus', s)}</option>`).join('')}
+              </select>
+              <button class="btn btn-primary btn-sm" id="apply-status-btn">${i18n.t('apply')}</button>
+              <select class="input" id="priority-select" style="width:auto">
+                ${PRIORITIES.map((p) => `<option value="${p}" ${p === issue.priority ? 'selected' : ''}>${i18n.enumLabel('IssuePriority', p)}</option>`).join('')}
+              </select>
+              <button class="btn btn-outline btn-sm" id="apply-priority-btn">${i18n.t('updatePriority')}</button>
+            </div>
+          </div>` : ''}
+        </div>
+
+        <div class="two-col" style="margin-top:20px">
+          <div class="stack">
+            <div class="card">
+              <h4 style="margin-bottom:12px">${i18n.t('commentsLabel')} (<span id="comment-count">${issue.commentCount}</span>)</h4>
+              <form id="comment-form" class="row" style="margin-bottom:16px">
+                <input class="input" id="comment-input" placeholder="${i18n.t('addCommentPlaceholder')}" aria-label="Add a comment" />
+                <button class="btn btn-primary btn-sm" type="submit">${i18n.t('post')}</button>
+              </form>
+              <div id="comment-list">${loading.skeletonRows(2, 1)}</div>
+            </div>
+          </div>
+          <div class="card">
+            <h4 style="margin-bottom:12px">${i18n.t('issueTimeline')}</h4>
+            <div class="timeline" id="timeline">${loading.skeletonRows(3, 1)}</div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('support-btn').addEventListener('click', async () => {
+        try {
+          await api.post(`/issues/${issueId}/support`);
+          toast.success(i18n.t('youAreNowSupporting'));
+          loadIssue();
+        } catch (e) { toast.error(e.message); }
+      });
+
+      if (isAdmin) {
+        document.getElementById('apply-status-btn').addEventListener('click', async () => {
+          const status = document.getElementById('status-select').value;
+          if (!status) return;
+          try {
+            await api.patch(`/issues/${issueId}/status`, { status });
+            toast.success(i18n.t('statusUpdated'));
+            loadIssue();
+          } catch (e) { toast.error(e.message); }
+        });
+        document.getElementById('apply-priority-btn').addEventListener('click', async () => {
+          const priority = document.getElementById('priority-select').value;
+          try {
+            await api.patch(`/issues/${issueId}/priority`, { priority });
+            toast.success(i18n.t('priorityUpdated'));
+            loadIssue();
+          } catch (e) { toast.error(e.message); }
+        });
+      }
+
+      document.getElementById('comment-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('comment-input');
+        const content = input.value.trim();
+        if (!content) return;
+        try {
+          await api.post(`/issues/${issueId}/comments`, { content });
+          input.value = '';
+          loadComments();
+          loadTimeline();
+        } catch (e) { toast.error(e.message); }
+      });
+    }
+
+    async function loadTimeline() {
+      try {
+        const activities = await api.get(`/issues/${issueId}/timeline`);
+        const el = document.getElementById('timeline');
+        if (!activities.length) { el.innerHTML = `<p class="text-sm text-muted">${i18n.t('noActivityYet')}</p>`; return; }
+        el.innerHTML = activities.map((a) => `
+          <div class="timeline-item">
+            <div class="timeline-time">${new Date(a.createdAt).toLocaleString()}</div>
+            <div class="timeline-text">${a.message}</div>
+          </div>`).join('');
+      } catch (e) { /* non-fatal */ }
+    }
+
+    async function loadComments() {
+      try {
+        const page = await api.get(`/issues/${issueId}/comments`, { query: { size: 20 } });
+        const el = document.getElementById('comment-list');
+        if (!page.content.length) {
+          loading.emptyState(el, { icon: '💬', title: i18n.t('noCommentsYetTitle'), message: i18n.t('beFirstToComment') });
+          return;
+        }
+        el.innerHTML = page.content.map((c) => `
+          <div style="padding:10px 0;border-bottom:1px solid var(--color-border)">
+            <div class="row" style="margin-bottom:2px"><strong class="text-sm">${c.authorName}</strong><span class="text-xs text-muted">${timeAgo(c.createdAt)}</span></div>
+            <div class="text-sm">${c.content}</div>
+          </div>`).join('');
+      } catch (e) { /* non-fatal */ }
+    }
+  </script>
+</body>
+</html>

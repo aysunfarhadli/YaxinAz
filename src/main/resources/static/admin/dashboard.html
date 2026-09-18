@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/admin.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+  <script src="/js/charts.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    if (!auth.hasAnyRole('COMMUNITY_ADMIN', 'PLATFORM_ADMIN')) {
+      document.body.innerHTML = `<p style="padding:40px">${i18n.t('adminAccessRequired')}</p>`;
+      throw new Error('unauthorized');
+    }
+    const pageEl = appShell.render({ activeNav: 'admin-dashboard' });
+    const isPlatformAdmin = currentUser.role === 'PLATFORM_ADMIN';
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('adminDashboardTitle')}</h1><p>${i18n.t('adminDashboardSubtitle')}</p></div>
+      </div>
+      <div id="admin-content">${loading.skeletonRows(4, 2)}</div>
+    `;
+
+    async function init() {
+      const communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('admin-content'), { icon: '🏘️', title: i18n.t('noCommunitySelected'), message: i18n.t('selectCommunityFirst') });
+        return;
+      }
+      loadAdminDashboard(communityId);
+    }
+    init();
+
+    async function loadAdminDashboard(communityId) {
+      const content = document.getElementById('admin-content');
+      const [stats, insights, pendingMembers] = await Promise.all([
+        api.get(`/communities/${communityId}/statistics`).catch(() => null),
+        api.get(`/communities/${communityId}/insights`).catch(() => []),
+        api.get(`/communities/${communityId}/members`, { query: { status: 'PENDING', size: 10 } }).catch(() => ({ content: [] })),
+      ]);
+
+      if (!stats) {
+        loading.emptyState(content, { icon: '🚫', title: i18n.t('unableToLoadStats'), message: i18n.t('pleaseTryAgainLater') });
+        return;
+      }
+
+      content.innerHTML = `
+        <div class="admin-stat-grid">
+          <div class="stat-card"><span class="stat-label">${i18n.t('openIssues')}</span><span class="stat-value">${stats.openIssues}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('criticalIssuesLabel')}</span><span class="stat-value">${stats.criticalIssues}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('staleIssuesLabel')}</span><span class="stat-value">${stats.staleIssues}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('escalatedLabel')}</span><span class="stat-value">${stats.escalatedIssues}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('resolutionRateLabel')}</span><span class="stat-value">${stats.resolutionRatePercent}%</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('avgResolutionHrsLabel')}</span><span class="stat-value">${stats.averageResolutionTimeHours}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('communityMembers')}</span><span class="stat-value">${stats.approvedMemberCount}</span></div>
+          <div class="stat-card"><span class="stat-label">${i18n.t('providersPlatformLabel')}</span><span class="stat-value">${stats.platformTotalReviews > 0 ? stats.platformAverageProviderRating.toFixed(1) + '★ avg' : '—'}</span></div>
+        </div>
+
+        <div class="grid grid-cols-2" style="margin-top:20px">
+          <div class="card chart-card"><h4 style="margin-bottom:12px">${i18n.t('issuesByCategory')}</h4><canvas id="chart-category"></canvas></div>
+          <div class="card chart-card"><h4 style="margin-bottom:12px">${i18n.t('issuesByPriority')}</h4><canvas id="chart-priority"></canvas></div>
+        </div>
+        <div class="card chart-card" style="margin-top:20px"><h4 style="margin-bottom:12px">${i18n.t('activityTrend7Day')}</h4><canvas id="chart-trend"></canvas></div>
+
+        <div class="two-col" style="margin-top:20px">
+          <div class="stack">
+            <div class="ai-panel">
+              <span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('aiCommunityInsights')}</span>
+              <div id="insights-list" style="margin-top:10px">
+                ${insights.length ? `<ul role="list" class="stack" style="gap:6px">${insights.map((i) => `<li class="text-sm">• ${i}</li>`).join('')}</ul>` : `<p class="text-sm text-muted">${i18n.t('notEnoughDataInsights')}</p>`}
+              </div>
+            </div>
+            <div class="card">
+              <h4 style="margin-bottom:10px">${i18n.t('pendingMemberships')}</h4>
+              <div id="pending-members">${pendingMembers.content.length ? '' : `<p class="text-sm text-muted">${i18n.t('noPendingRequests')}</p>`}</div>
+            </div>
+          </div>
+          <div class="stack" id="platform-admin-widgets"></div>
+        </div>
+      `;
+
+      renderChartsSafely(stats);
+
+      if (pendingMembers.content.length) {
+        document.getElementById('pending-members').innerHTML = pendingMembers.content.map((m) => `
+          <div class="queue-item">
+            <div><strong class="text-sm">${m.firstName} ${m.lastName}</strong><br/><span class="text-xs text-muted">${m.email}</span></div>
+            <div class="row">
+              <button class="btn btn-primary btn-sm" data-approve="${m.membershipId}">${i18n.t('approve')}</button>
+              <button class="btn btn-outline btn-sm" data-reject="${m.membershipId}">${i18n.t('reject')}</button>
+            </div>
+          </div>`).join('');
+        document.querySelectorAll('[data-approve]').forEach((btn) => btn.addEventListener('click', () => reviewMembership(communityId, btn.dataset.approve, 'APPROVED')));
+        document.querySelectorAll('[data-reject]').forEach((btn) => btn.addEventListener('click', () => reviewMembership(communityId, btn.dataset.reject, 'REJECTED')));
+      }
+
+      if (isPlatformAdmin) loadPlatformAdminWidgets();
+    }
+
+    /**
+     * Chart.js loads from a CDN (see the <script> tags in <head>/before app.js) - a blocked or
+     * failed CDN load (ad-blocker, corporate proxy, transient outage; reproduced locally via
+     * Chromium's ORB blocking the request in one test run) must not take down the rest of the
+     * dashboard, which has already rendered real data by this point. Each chart degrades to a
+     * quiet placeholder instead of throwing an uncaught ReferenceError.
+     */
+    function renderChartsSafely(stats) {
+      if (typeof Chart === 'undefined') {
+        document.querySelectorAll('.chart-card canvas').forEach((c) => {
+          c.replaceWith(Object.assign(document.createElement('p'), { className: 'text-sm text-muted', textContent: i18n.t('chartsUnavailable') }));
+        });
+        return;
+      }
+      try {
+        charts.donut(document.getElementById('chart-category'), Object.keys(stats.issuesByCategory).map((c) => i18n.enumLabel('IssueCategory', c)), Object.values(stats.issuesByCategory));
+        charts.priorityBar(document.getElementById('chart-priority'), stats.issuesByPriority);
+        charts.line(document.getElementById('chart-trend'), Object.keys(stats.dailyActivityLast7Days), Object.values(stats.dailyActivityLast7Days));
+      } catch (e) {
+        console.warn('Chart rendering failed', e);
+      }
+    }
+
+    async function reviewMembership(communityId, membershipId, status) {
+      try {
+        await api.patch(`/communities/${communityId}/members/${membershipId}`, { status });
+        const statusWord = status === 'APPROVED' ? i18n.t('statusApprovedWord') : i18n.t('statusRejectedWord');
+        toast.success(i18n.t('membershipStatusUpdated', { status: statusWord }));
+        init();
+      } catch (e) { toast.error(e.message); }
+    }
+
+    async function loadPlatformAdminWidgets() {
+      const el = document.getElementById('platform-admin-widgets');
+      el.innerHTML = loading.skeletonRows(2, 2);
+      try {
+        const [providersPage, reportsPage] = await Promise.all([
+          api.get('/providers', { query: { verified: false, size: 5 } }),
+          api.get('/admin/reports', { query: { size: 5 } }),
+        ]);
+        el.innerHTML = `
+          <div class="card">
+            <h4 style="margin-bottom:10px">${i18n.t('pendingProviderVerification')}</h4>
+            ${providersPage.content.length ? providersPage.content.map((p) => `
+              <div class="queue-item">
+                <div><strong class="text-sm">${p.businessName}</strong></div>
+                <button class="btn btn-primary btn-sm" data-verify="${p.id}">${i18n.t('verify')}</button>
+              </div>`).join('') : `<p class="text-sm text-muted">${i18n.t('noPendingProviders')}</p>`}
+          </div>
+          <div class="card">
+            <h4 style="margin-bottom:10px">${i18n.t('moderationQueue')}</h4>
+            ${reportsPage.content.length ? reportsPage.content.map((r) => `
+              <div class="queue-item">
+                <div><strong class="text-sm">${r.contentType} #${r.contentId}</strong><br/><span class="text-xs text-muted">${r.reason}</span></div>
+                <a href="/admin/operations.html" class="btn btn-outline btn-sm">${i18n.t('review')}</a>
+              </div>`).join('') : `<p class="text-sm text-muted">${i18n.t('noPendingReports')}</p>`}
+          </div>
+        `;
+        document.querySelectorAll('[data-verify]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            try {
+              await api.patch(`/providers/${btn.dataset.verify}/verify`, { verified: true });
+              toast.success(i18n.t('providerVerified'));
+              loadPlatformAdminWidgets();
+            } catch (e) { toast.error(e.message); }
+          });
+        });
+      } catch (e) {
+        el.innerHTML = `<p class="text-sm text-danger">${i18n.t('unableToLoadAdminWidgets')}</p>`;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+.feed-card { padding: var(--spacing-md); }
+.feed-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: var(--spacing-sm); }
+.feed-card-header .meta { display: flex; flex-direction: column; }
+.feed-card-header .name { font-weight: 700; font-size: 14px; }
+.feed-card-header .time { font-size: 12px; color: var(--color-text-muted); }
+.feed-card.pinned { border-color: var(--color-primary); }
+.feed-card.type-alert { border-left: 4px solid var(--color-danger); }
+.feed-card.type-announcement { border-left: 4px solid var(--color-primary); }
+.feed-card-actions { display: flex; align-items: center; gap: var(--spacing-md); margin-top: var(--spacing-sm); font-size: 13px; color: var(--color-text-secondary); }
+.feed-card-actions button { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.feed-card-actions button.liked { color: var(--color-danger); }
+
+.poll-option { position: relative; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 8px; overflow: hidden; cursor: pointer; }
+.poll-option .fill { position: absolute; inset: 0; background: var(--color-primary-soft); z-index: 0; transition: width var(--transition-base); }
+.poll-option .content { position: relative; z-index: 1; display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.poll-option.voted { cursor: default; }
+.poll-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--color-text-muted); margin-top: 8px; }
+
+.event-card .event-date-badge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 52px; height: 52px; border-radius: var(--radius-md);
+  background: var(--color-primary-soft); color: var(--color-primary);
+  font-weight: 700; line-height: 1.1;
+}
+.event-card .event-date-badge .month { font-size: 10px; text-transform: uppercase; }
+.event-card .event-date-badge .day { font-size: 18px; }
+.attendance-buttons { display: flex; gap: 6px; margin-top: var(--spacing-sm); }
+.attendance-buttons button { flex: 1; }
+.attendance-buttons button.selected { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-soft); }
+
+.lostfound-card img, .lostfound-card .no-image {
+  width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-text-muted); font-size: 12px;
+  margin-bottom: var(--spacing-sm);
+}

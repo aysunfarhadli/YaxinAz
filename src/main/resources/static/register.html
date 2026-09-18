@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create account - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <select id="lang-switcher" class="input" style="position:fixed;top:20px;right:24px;z-index:50;width:auto;padding:6px 10px;font-size:13px" aria-label="Language">
+    <option value="EN">EN</option>
+    <option value="AZ">AZ</option>
+    <option value="RU">RU</option>
+  </select>
+  <div class="auth-split">
+    <div class="auth-visual">
+      <a href="/index.html" style="display:flex;align-items:center;gap:12px;font-weight:800;font-size:22px;margin-bottom:32px;color:#fff">
+        <span class="mark mark-lg" style="background:rgba(255,255,255,0.2)">Y</span> Yaxın.az
+      </a>
+      <h1 style="color:#fff;font-size:38px;max-width:420px" data-i18n="registerVisualHeadline">Your community, one platform away.</h1>
+      <p style="color:rgba(255,255,255,0.85);max-width:400px;margin-top:16px" data-i18n="registerVisualLead">
+        Create your account, join your residence, and start participating - reporting issues,
+        joining discussions, and finding trusted local help.
+      </p>
+    </div>
+    <div class="auth-form-side">
+      <div class="auth-form-card animate-in">
+        <h2 style="margin-bottom:4px" data-i18n="joinYourCommunity">Join your community</h2>
+        <p style="margin-bottom:24px" data-i18n="joinYourCommunitySubtitle">Create your Yaxın.az account - it takes less than a minute.</p>
+
+        <form id="register-form" novalidate>
+          <div class="grid grid-cols-2" style="gap:12px">
+            <div class="field">
+              <label for="firstName" data-i18n="firstName">First name</label>
+              <input class="input" type="text" id="firstName" name="firstName" required />
+            </div>
+            <div class="field">
+              <label for="lastName" data-i18n="lastName">Last name</label>
+              <input class="input" type="text" id="lastName" name="lastName" required />
+            </div>
+          </div>
+          <div class="field">
+            <label for="email" data-i18n="email">Email</label>
+            <input class="input" type="email" id="email" name="email" required autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="password" data-i18n="password">Password</label>
+            <div style="position:relative">
+              <input class="input" type="password" id="password" name="password" required minlength="8" autocomplete="new-password" style="padding-right:60px" />
+              <button type="button" class="password-toggle" id="toggle-password" data-i18n="showPassword">Show</button>
+            </div>
+            <span class="hint" data-i18n="atLeast8Chars">At least 8 characters.</span>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="register-submit">
+            <span class="btn-label" data-i18n="signUp">Sign up</span>
+          </button>
+        </form>
+
+        <p class="text-sm" style="margin-top:20px;text-align:center">
+          <span data-i18n="alreadyHaveAccount">Already have an account?</span> <a class="link" href="/login.html" data-i18n="signIn">Sign in</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/form.js"></script>
+  <script>
+    i18n.applyToDom();
+    const langSwitcher = document.getElementById('lang-switcher');
+    langSwitcher.value = i18n.current();
+    langSwitcher.addEventListener('change', () => i18n.setLanguage(langSwitcher.value));
+    if (auth.isAuthenticated()) location.href = '/dashboard.html';
+
+    document.getElementById('toggle-password').addEventListener('click', () => {
+      const input = document.getElementById('password');
+      const btn = document.getElementById('toggle-password');
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      btn.textContent = isPassword ? i18n.t('hidePassword') : i18n.t('showPassword');
+    });
+
+    const form = document.getElementById('register-form');
+    const submitBtn = document.getElementById('register-submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formUtil.clearErrors(form);
+      loading.setButtonLoading(submitBtn, true);
+      const data = formUtil.toJson(form);
+      try {
+        await auth.register(data);
+        toast.success(i18n.t('welcomeToApp'));
+        location.href = '/dashboard.html';
+      } catch (err) {
+        if (err.validationErrors) formUtil.applyValidationErrors(form, err.validationErrors);
+        toast.error(err.message);
+      } finally {
+        loading.setButtonLoading(submitBtn, false);
+      }
+    });
+  </script>
+</body>
+</html>

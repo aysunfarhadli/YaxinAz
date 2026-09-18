@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Events - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/community.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'events' });
+    let communityId = null;
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('eventsTitle')}</h1><p>${i18n.t('eventsSubtitle')}</p></div>
+        <button class="btn btn-primary" id="new-event-btn">+ ${i18n.t('newEventBtn')}</button>
+      </div>
+      <div class="filter-bar">
+        <button class="btn btn-outline btn-sm active" data-filter="upcoming">${i18n.t('upcomingTab')}</button>
+        <button class="btn btn-ghost btn-sm" data-filter="past">${i18n.t('pastTab')}</button>
+      </div>
+      <div id="event-list" class="grid grid-cols-2"></div>
+    `;
+
+    let filterMode = 'upcoming';
+    document.getElementById('event-list').innerHTML = loading.skeletonRows(4, 3);
+
+    async function initCommunity() {
+      communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('event-list'), { icon: '🏘️', title: i18n.t('noCommunitySelected'), message: i18n.t('joinCommunityFirst') });
+        return;
+      }
+      loadEvents();
+    }
+    initCommunity();
+
+    document.querySelectorAll('[data-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        filterMode = btn.dataset.filter;
+        document.querySelectorAll('[data-filter]').forEach((b) => b.className = 'btn btn-ghost btn-sm');
+        btn.className = 'btn btn-outline btn-sm active';
+        loadEvents();
+      });
+    });
+
+    async function loadEvents() {
+      try {
+        const page = await api.get(`/communities/${communityId}/events`, { query: { size: 20, upcoming: filterMode === 'upcoming' } });
+        const el = document.getElementById('event-list');
+        if (!page.content.length) {
+          const modeLabel = filterMode === 'upcoming' ? i18n.t('upcomingTab') : i18n.t('pastTab');
+          loading.emptyState(el, { icon: '📅', title: i18n.t('noEventsFilteredTitle', { mode: modeLabel.toLowerCase() }), message: i18n.t('checkBackOrCreate') });
+        } else {
+          el.innerHTML = page.content.map(renderEvent).join('');
+          wireEventActions();
+        }
+      } catch (e) { toast.error(i18n.t('unableToLoadEvents') + e.message); }
+    }
+
+    function renderEvent(ev) {
+      const start = new Date(ev.startTime);
+      const statuses = [['GOING', i18n.t('statusGoing')], ['MAYBE', i18n.t('statusMaybe')], ['NOT_GOING', i18n.t('statusNotGoing')]];
+      return `
+        <div class="card" data-event-id="${ev.id}">
+          <div class="row" style="margin-bottom:10px">
+            <div class="event-date-badge">
+              <span class="month">${i18n.shortMonth(start)}</span>
+              <span class="day">${start.getDate()}</span>
+            </div>
+            <div>
+              <h4>${ev.title}</h4>
+              <p class="text-sm text-muted">${i18n.shortWeekdayTime(start)} · ${ev.location || i18n.t('noLocationShort')}</p>
+            </div>
+          </div>
+          <p class="text-sm">${ev.description || ''}</p>
+          <div class="text-sm text-secondary" style="margin-top:8px">
+            👥 ${ev.goingCount} ${i18n.t('goingLabel')}${ev.capacity ? i18n.t('capacitySuffix', { capacity: ev.capacity }) : ''} · ${ev.maybeCount} ${i18n.t('maybeLabel')}
+          </div>
+          <div class="attendance-buttons">
+            ${statuses.map(([status, label]) => `
+              <button class="btn btn-outline btn-sm attendance-btn ${ev.myStatus === status ? 'selected' : ''}" data-event="${ev.id}" data-status="${status}">${label}</button>
+            `).join('')}
+          </div>
+        </div>`;
+    }
+
+    function wireEventActions() {
+      document.querySelectorAll('.attendance-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await api.post(`/communities/${communityId}/events/${btn.dataset.event}/attendance`, { status: btn.dataset.status });
+            loadEvents();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+    }
+
+    document.getElementById('new-event-btn').addEventListener('click', () => {
+      if (!communityId) { toast.warning(i18n.t('joinCommunityFirst')); return; }
+      modal.open({
+        title: i18n.t('createAnEvent'),
+        bodyHtml: `
+          <div class="field"><label>${i18n.t('titleLabel')}</label><input class="input" id="event-title" /></div>
+          <div class="field"><label>${i18n.t('descriptionLabel')}</label><textarea class="input" id="event-description"></textarea></div>
+          <div class="field"><label>${i18n.t('locationLabel')}</label><input class="input" id="event-location" /></div>
+          <div class="grid grid-cols-2" style="gap:12px">
+            <div class="field"><label>${i18n.t('startLabel')}</label><input class="input" type="datetime-local" id="event-start" /></div>
+            <div class="field"><label>${i18n.t('endLabel')}</label><input class="input" type="datetime-local" id="event-end" /></div>
+          </div>
+          <div class="field"><label>${i18n.t('capacityOptional')}</label><input class="input" type="number" min="1" id="event-capacity" /></div>
+        `,
+        actions: [
+          { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+          { label: i18n.t('createEventBtn'), className: 'btn btn-primary', onClick: async (done) => {
+              const title = document.getElementById('event-title').value.trim();
+              const start = document.getElementById('event-start').value;
+              const end = document.getElementById('event-end').value;
+              if (!title || !start || !end) { toast.warning(i18n.t('titleStartEndRequired')); return; }
+              try {
+                await api.post(`/communities/${communityId}/events`, {
+                  title, description: document.getElementById('event-description').value.trim() || null,
+                  location: document.getElementById('event-location').value.trim() || null,
+                  startTime: new Date(start).toISOString(), endTime: new Date(end).toISOString(),
+                  capacity: document.getElementById('event-capacity').value ? Number(document.getElementById('event-capacity').value) : null,
+                });
+                toast.success(i18n.t('eventCreated'));
+                done();
+                loadEvents();
+              } catch (e) { toast.error(e.message); }
+            } },
+        ],
+      });
+    });
+  </script>
+</body>
+</html>

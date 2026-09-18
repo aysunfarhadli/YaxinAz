@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polls - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/community.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'polls' });
+    let communityId = null;
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('pollsTitle')}</h1><p>${i18n.t('pollsSubtitle')}</p></div>
+        <button class="btn btn-primary" id="new-poll-btn">+ ${i18n.t('newPollBtn')}</button>
+      </div>
+      <div id="poll-list" class="grid grid-cols-2"></div>
+    `;
+
+    document.getElementById('poll-list').innerHTML = loading.skeletonRows(4, 3);
+
+    async function initCommunity() {
+      communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('poll-list'), { icon: '🏘️', title: i18n.t('noCommunitySelected'), message: i18n.t('joinCommunityFirst') });
+        return;
+      }
+      loadPolls();
+    }
+    initCommunity();
+
+    async function loadPolls() {
+      try {
+        const page = await api.get(`/communities/${communityId}/polls`, { query: { size: 20 } });
+        const el = document.getElementById('poll-list');
+        if (!page.content.length) {
+          loading.emptyState(el, { icon: '📊', title: i18n.t('noPollsYetTitle'), message: i18n.t('noPollsYetMessage') });
+        } else {
+          el.innerHTML = page.content.map(renderPoll).join('');
+          wirePollEvents();
+        }
+      } catch (e) { toast.error(i18n.t('unableToLoadPolls') + e.message); }
+    }
+
+    function renderPoll(poll) {
+      const expired = !poll.active || (poll.expiresAt && new Date(poll.expiresAt) < new Date());
+      return `
+        <div class="card" data-poll-id="${poll.id}">
+          <div class="row-between" style="margin-bottom:10px">
+            <h4>${poll.question}</h4>
+            ${expired ? `<span class="badge badge-neutral">${i18n.t('closedLabel')}</span>` : `<span class="badge badge-success">${i18n.t('activeLabel')}</span>`}
+          </div>
+          <div class="poll-options">
+            ${poll.options.map((opt) => `
+              <div class="poll-option ${poll.votedByCurrentUser ? 'voted' : ''}" data-option-id="${opt.id}">
+                ${poll.votedByCurrentUser || expired ? `<div class="fill" style="width:${opt.percentage}%"></div>` : ''}
+                <div class="content">
+                  <span>${opt.text} ${poll.myVoteOptionId === opt.id ? '✓' : ''}</span>
+                  <span>${poll.votedByCurrentUser || expired ? opt.percentage.toFixed(0) + '%' : ''}</span>
+                </div>
+              </div>`).join('')}
+          </div>
+          <div class="poll-meta">
+            <span>${poll.totalVotes} ${i18n.t('votesCount')}</span>
+            <span>${poll.expiresAt ? i18n.t('closesOn') + ' ' + new Date(poll.expiresAt).toLocaleDateString() : i18n.t('noExpiry')}</span>
+          </div>
+        </div>`;
+    }
+
+    function wirePollEvents() {
+      document.querySelectorAll('.poll-option:not(.voted)').forEach((el) => {
+        el.addEventListener('click', async () => {
+          const pollId = el.closest('[data-poll-id]').dataset.pollId;
+          try {
+            await api.post(`/communities/${communityId}/polls/${pollId}/vote`, { optionId: Number(el.dataset.optionId) });
+            toast.success(i18n.t('voteRecorded'));
+            loadPolls();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+    }
+
+    document.getElementById('new-poll-btn').addEventListener('click', () => {
+      if (!communityId) { toast.warning(i18n.t('joinCommunityFirst')); return; }
+      let optionCount = 2;
+      const { close } = modal.open({
+        title: i18n.t('createAPoll'),
+        bodyHtml: `
+          <div class="field"><label>${i18n.t('questionLabel')}</label><input class="input" id="poll-question" /></div>
+          <div id="poll-options-fields">
+            <div class="field"><label>${i18n.t('optionN', { n: 1 })}</label><input class="input poll-option-input" /></div>
+            <div class="field"><label>${i18n.t('optionN', { n: 2 })}</label><input class="input poll-option-input" /></div>
+          </div>
+          <button type="button" class="btn btn-outline btn-sm" id="add-option-btn">${i18n.t('addOption')}</button>
+          <div class="field" style="margin-top:12px"><label>${i18n.t('expiresOptional')}</label><input class="input" type="date" id="poll-expiry" /></div>
+        `,
+        actions: [
+          { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+          { label: i18n.t('createPollBtn'), className: 'btn btn-primary', onClick: async (done) => {
+              const question = document.getElementById('poll-question').value.trim();
+              const options = Array.from(document.querySelectorAll('.poll-option-input')).map((i) => i.value.trim()).filter(Boolean);
+              if (!question || options.length < 2) { toast.warning(i18n.t('addQuestionAndOptions')); return; }
+              const expiryVal = document.getElementById('poll-expiry').value;
+              try {
+                await api.post(`/communities/${communityId}/polls`, {
+                  question, options,
+                  expiresAt: expiryVal ? new Date(expiryVal + 'T23:59:59').toISOString() : null,
+                });
+                toast.success(i18n.t('pollCreated'));
+                done();
+                loadPolls();
+              } catch (e) { toast.error(e.message); }
+            } },
+        ],
+      });
+      document.getElementById('add-option-btn').addEventListener('click', () => {
+        if (optionCount >= 10) return;
+        optionCount++;
+        const field = document.createElement('div');
+        field.className = 'field';
+        field.innerHTML = `<label>${i18n.t('optionN', { n: optionCount })}</label><input class="input poll-option-input" />`;
+        document.getElementById('poll-options-fields').appendChild(field);
+      });
+    });
+  </script>
+</body>
+</html>

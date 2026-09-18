@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: yaxinaz-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yaxinaz_db
+      POSTGRES_USER: ${DB_USERNAME:-yaxinaz}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-yaxinaz}
+    ports:
+      - "5432:5432"
+    volumes:
+      - yaxinaz-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-yaxinaz} -d yaxinaz_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: yaxinaz-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/yaxinaz_db
+      DB_USERNAME: ${DB_USERNAME:-yaxinaz}
+      DB_PASSWORD: ${DB_PASSWORD:-yaxinaz}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please-32bytes-min}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-5}
+      AI_ENABLED: ${AI_ENABLED:-true}
+      MOCK_AI_FALLBACK: ${MOCK_AI_FALLBACK:-true}
+      AI_TIMEOUT: ${AI_TIMEOUT:-15000}
+      FILE_STORAGE_PATH: /app/uploads
+    ports:
+      -  "8080:8080"
+    volumes:
+      - yaxinaz-uploads:/app/uploads
+volumes:
+
+  yaxinaz-db-data:
+  yaxinaz-uploads:

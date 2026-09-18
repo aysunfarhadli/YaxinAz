@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <select id="lang-switcher" class="input" style="position:fixed;top:20px;right:24px;z-index:50;width:auto;padding:6px 10px;font-size:13px" aria-label="Language">
+    <option value="EN">EN</option>
+    <option value="AZ">AZ</option>
+    <option value="RU">RU</option>
+  </select>
+  <div class="auth-split">
+    <div class="auth-visual">
+      <a href="/index.html" style="display:flex;align-items:center;gap:12px;font-weight:800;font-size:22px;margin-bottom:32px;color:#fff">
+        <span class="mark mark-lg" style="background:rgba(255,255,255,0.2)">Y</span> Yaxın.az
+      </a>
+      <h1 style="color:#fff;font-size:38px;max-width:420px" data-i18n="loginVisualHeadline">Closer communities.<br/>Smarter living.</h1>
+      <p style="color:rgba(255,255,255,0.85);max-width:400px;margin-top:16px" data-i18n="loginVisualLead">
+        Report problems, connect with neighbors, discover trusted local services, and let AI help
+        your community run smarter.
+      </p>
+      <ul role="list" style="margin-top:28px;display:flex;flex-direction:column;gap:14px;color:#fff">
+        <li data-i18n="loginVisualPoint1">✓ AI understands your reports instantly</li>
+        <li data-i18n="loginVisualPoint2">✓ Real-time updates from your community admins</li>
+        <li data-i18n="loginVisualPoint3">✓ Trusted, rated local service providers</li>
+      </ul>
+    </div>
+    <div class="auth-form-side">
+      <div class="auth-form-card animate-in">
+        <h2 style="margin-bottom:4px" data-i18n="welcomeBack">Welcome back</h2>
+        <p style="margin-bottom:24px" data-i18n="signInSubtitle">Sign in to continue to your community.</p>
+
+        <div id="expired-banner" hidden class="alert-banner" style="margin-bottom:16px" data-i18n="sessionExpired">
+          Your session expired. Please sign in again.
+        </div>
+
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="email" data-i18n="email">Email</label>
+            <input class="input" type="email" id="email" name="email" required autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="password" data-i18n="password">Password</label>
+            <div style="position:relative">
+              <input class="input" type="password" id="password" name="password" required autocomplete="current-password" style="padding-right:60px" />
+              <button type="button" class="password-toggle" id="toggle-password" data-i18n="showPassword">Show</button>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" id="login-submit">
+            <span class="btn-label" data-i18n="signIn">Sign in</span>
+          </button>
+        </form>
+
+        <div class="divider" style="margin:20px 0"></div>
+
+        <button class="btn btn-outline btn-block" id="explore-demo-btn" data-i18n="exploreDemo">✨ Explore Demo</button>
+
+        <p class="text-sm" style="margin-top:20px;text-align:center">
+          <span data-i18n="noAccountYet">Don't have an account?</span> <a class="link" href="/register.html" data-i18n="signUp">Sign up</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/form.js"></script>
+  <script>
+    i18n.applyToDom();
+    const langSwitcher = document.getElementById('lang-switcher');
+    langSwitcher.value = i18n.current();
+    langSwitcher.addEventListener('change', () => i18n.setLanguage(langSwitcher.value));
+
+    if (auth.isAuthenticated()) {
+      location.href = '/dashboard.html';
+    }
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('expired')) document.getElementById('expired-banner').hidden = false;
+
+    document.getElementById('toggle-password').addEventListener('click', () => {
+      const input = document.getElementById('password');
+      const btn = document.getElementById('toggle-password');
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      btn.textContent = isPassword ? i18n.t('hidePassword') : i18n.t('showPassword');
+    });
+
+    const form = document.getElementById('login-form');
+    const submitBtn = document.getElementById('login-submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formUtil.clearErrors(form);
+      loading.setButtonLoading(submitBtn, true);
+      const data = formUtil.toJson(form);
+      try {
+        await auth.login(data.email, data.password);
+        const returnTo = params.get('returnTo');
+        location.href = returnTo ? decodeURIComponent(returnTo) : '/dashboard.html';
+      } catch (err) {
+        if (err.validationErrors) formUtil.applyValidationErrors(form, err.validationErrors);
+        toast.error(err.message);
+      } finally {
+        loading.setButtonLoading(submitBtn, false);
+      }
+    });
+
+    document.getElementById('explore-demo-btn').addEventListener('click', () => {
+      modal.open({
+        title: i18n.t('exploreDemoTitle'),
+        bodyHtml: `
+          <p class="text-sm" style="margin-bottom:16px">${i18n.t('exploreDemoIntro')}</p>
+          <div class="stack" id="demo-account-list"></div>
+        `,
+        actions: [{ label: i18n.t('cancel'), className: 'btn btn-ghost' }],
+      });
+      const list = document.getElementById('demo-account-list');
+      const accounts = [
+        { label: i18n.t('roleResident'), email: 'resident@yaxinaz.az', icon: '🏠', desc: i18n.t('demoResidentDesc') },
+        { label: i18n.t('roleCommunityAdmin'), email: 'admin@yaxinaz.az', icon: '🛠️', desc: i18n.t('demoCommunityAdminDesc') },
+        { label: i18n.t('roleServiceProvider'), email: 'provider@yaxinaz.az', icon: '🧰', desc: i18n.t('demoServiceProviderDesc') },
+        { label: i18n.t('rolePlatformAdmin'), email: 'platform@yaxinaz.az', icon: '📊', desc: i18n.t('demoPlatformAdminDesc') },
+      ];
+      list.innerHTML = accounts.map((a) => `
+        <button class="card card-compact card-hover row" style="width:100%;text-align:left" data-email="${a.email}">
+          <span style="font-size:22px">${a.icon}</span>
+          <span style="flex:1">
+            <strong style="display:block;font-size:14px">${a.label}</strong>
+            <span class="text-sm text-secondary">${a.desc}</span>
+          </span>
+          <span>→</span>
+        </button>`).join('');
+      list.querySelectorAll('button[data-email]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await auth.login(btn.dataset.email, 'Demo1234!');
+            const user = auth.currentUser();
+            modal.close();
+            location.href = user.role === 'PLATFORM_ADMIN' ? '/admin/operations.html' : '/dashboard.html';
+          } catch (err) {
+            toast.error(i18n.t('demoLoginFailed') + err.message);
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>

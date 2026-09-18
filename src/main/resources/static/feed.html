@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Feed - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/community.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    const currentUser = auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'feed' });
+    let communityId = null;
+    const POST_TYPES = ['GENERAL', 'ANNOUNCEMENT', 'EVENT', 'QUESTION', 'ALERT', 'MARKETPLACE'];
+
+    function timeAgo(iso) {
+      const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (seconds < 60) return i18n.t('justNow');
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return i18n.t('minutesAgo', { n: minutes });
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return i18n.t('hoursAgo', { n: hours });
+      return i18n.t('daysAgo', { n: Math.floor(hours / 24) });
+    }
+    function initialsOf(name) { return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(); }
+    function typeBadge(type) {
+      const map = { ANNOUNCEMENT: 'primary', ALERT: 'danger', EVENT: 'secondary', QUESTION: 'neutral', MARKETPLACE: 'warning', GENERAL: 'neutral' };
+      return `<span class="badge badge-${map[type]}">${i18n.enumLabel('PostType', type)}</span>`;
+    }
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div><h1>${i18n.t('communityFeed')}</h1><p>${i18n.t('feedSubtitle')}</p></div>
+        <button class="btn btn-primary" id="new-post-btn">+ ${i18n.t('newPostBtn')}</button>
+      </div>
+      <div class="filter-bar">
+        <select class="input" id="filter-type" style="width:auto" aria-label="Filter by post type">
+          <option value="">${i18n.t('allTypes')}</option>
+          ${POST_TYPES.map((t) => `<option value="${t}">${i18n.enumLabel('PostType', t)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="feed-list" class="stack"></div>
+      <div class="row" style="justify-content:center;margin-top:16px" id="pagination"></div>
+    `;
+
+    let currentPage = 0;
+    document.getElementById('feed-list').innerHTML = loading.skeletonRows(3, 3);
+
+    async function initCommunity() {
+      communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('feed-list'), { icon: '🏘️', title: i18n.t('noCommunitySelected'), message: i18n.t('joinCommunityFirst') });
+        return;
+      }
+      loadFeed();
+    }
+    initCommunity();
+
+    async function loadFeed() {
+      const query = { page: currentPage, size: 10, postType: document.getElementById('filter-type').value || undefined };
+      try {
+        const page = await api.get(`/communities/${communityId}/posts`, { query });
+        const listEl = document.getElementById('feed-list');
+        if (!page.content.length) {
+          loading.emptyState(listEl, { icon: '📰', title: i18n.t('noPostsYetTitle'), message: i18n.t('feedEmptyMessage') });
+        } else {
+          listEl.innerHTML = page.content.map(renderPost).join('');
+          wirePostEvents();
+        }
+        renderPagination(page);
+      } catch (e) { toast.error(i18n.t('unableToLoadFeed') + e.message); }
+    }
+
+    function renderPost(post) {
+      const typeClass = post.postType === 'ALERT' ? 'type-alert' : post.postType === 'ANNOUNCEMENT' ? 'type-announcement' : '';
+      return `
+        <div class="card feed-card ${typeClass} ${post.pinned ? 'pinned' : ''}" data-post-id="${post.id}">
+          <div class="feed-card-header">
+            <span class="avatar">${initialsOf(post.authorName)}</span>
+            <div class="meta">
+              <span class="name">${post.authorName}</span>
+              <span class="time">${timeAgo(post.createdAt)} ${post.pinned ? '· 📌 ' + i18n.t('pinnedLabel') : ''}</span>
+            </div>
+            <div style="margin-left:auto">${typeBadge(post.postType)}</div>
+          </div>
+          ${post.title ? `<h4 style="margin-bottom:6px">${post.title}</h4>` : ''}
+          <p class="text-sm">${post.content}</p>
+          ${post.imageUrl ? `<img src="${post.imageUrl}" style="margin-top:10px;border-radius:var(--radius-md);max-height:280px;object-fit:cover" />` : ''}
+          <div class="feed-card-actions">
+            <button class="like-btn ${post.likedByCurrentUser ? 'liked' : ''}" data-id="${post.id}" data-liked="${post.likedByCurrentUser}">
+              ${post.likedByCurrentUser ? '❤️' : '🤍'} <span class="like-count">${post.likeCount}</span>
+            </button>
+            <button class="comment-toggle-btn" data-id="${post.id}">💬 ${post.commentCount}</button>
+            ${auth.hasAnyRole('COMMUNITY_ADMIN', 'PLATFORM_ADMIN') ? `<button class="pin-btn" data-id="${post.id}" data-pinned="${post.pinned}">${post.pinned ? i18n.t('unpin') : i18n.t('pin')}</button>` : ''}
+            ${post.authorId === currentUser.id ? `<button class="delete-btn" data-id="${post.id}">${i18n.t('delete')}</button>` : ''}
+          </div>
+          <div class="comments-section" data-id="${post.id}" hidden style="margin-top:12px;border-top:1px solid var(--color-border);padding-top:10px">
+            <div class="comment-list"></div>
+            <form class="comment-form row" style="margin-top:8px">
+              <input class="input" placeholder="${i18n.t('writeCommentPlaceholder')}" aria-label="Write a comment" />
+              <button class="btn btn-sm btn-primary" type="submit">${i18n.t('post')}</button>
+            </form>
+          </div>
+        </div>`;
+    }
+
+    function wirePostEvents() {
+      document.querySelectorAll('.like-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const liked = btn.dataset.liked === 'true';
+          try {
+            if (liked) await api.delete(`/posts/${btn.dataset.id}/like`);
+            else await api.post(`/posts/${btn.dataset.id}/like`);
+            loadFeed();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+      document.querySelectorAll('.pin-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const pinned = btn.dataset.pinned === 'true';
+          try {
+            await api.patch(`/posts/${btn.dataset.id}/pin?pinned=${!pinned}`);
+            loadFeed();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+      document.querySelectorAll('.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const ok = await modal.confirm({ title: i18n.t('deletePostConfirmTitle'), message: i18n.t('deletePostConfirmMessage'), confirmLabel: i18n.t('delete'), danger: true });
+          if (!ok) return;
+          try {
+            await api.delete(`/posts/${btn.dataset.id}`);
+            toast.success(i18n.t('postDeleted'));
+            loadFeed();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+      document.querySelectorAll('.comment-toggle-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const section = document.querySelector(`.comments-section[data-id="${btn.dataset.id}"]`);
+          section.hidden = !section.hidden;
+          if (!section.hidden && !section.dataset.loaded) {
+            section.dataset.loaded = '1';
+            const list = section.querySelector('.comment-list');
+            list.innerHTML = loading.skeletonRows(1, 1);
+            try {
+              const page = await api.get(`/posts/${btn.dataset.id}/comments`, { query: { size: 20 } });
+              list.innerHTML = page.content.length
+                ? page.content.map((c) => `<div style="padding:6px 0"><strong class="text-sm">${c.authorName}</strong> <span class="text-sm">${c.content}</span></div>`).join('')
+                : `<p class="text-sm text-muted">${i18n.t('noCommentsYetTitle')}</p>`;
+            } catch (e) { list.innerHTML = `<p class="text-sm text-danger">${i18n.t('failedToLoadComments')}</p>`; }
+          }
+        });
+      });
+      document.querySelectorAll('.comment-form').forEach((form) => {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const section = form.closest('.comments-section');
+          const input = form.querySelector('input');
+          const content = input.value.trim();
+          if (!content) return;
+          try {
+            await api.post(`/posts/${section.dataset.id}/comments`, { content });
+            input.value = '';
+            section.dataset.loaded = '';
+            document.querySelector(`.comment-toggle-btn[data-id="${section.dataset.id}"]`).click();
+            document.querySelector(`.comment-toggle-btn[data-id="${section.dataset.id}"]`).click();
+          } catch (e) { toast.error(e.message); }
+        });
+      });
+    }
+
+    function renderPagination(page) {
+      const el = document.getElementById('pagination');
+      if (page.totalPages <= 1) { el.innerHTML = ''; return; }
+      el.innerHTML = `
+        <button class="btn btn-outline btn-sm" ${page.first ? 'disabled' : ''} id="prev-page">← ${i18n.t('prevPage')}</button>
+        <span class="text-sm text-muted" style="margin:0 12px">${i18n.t('pageOf', { current: page.page + 1, total: page.totalPages })}</span>
+        <button class="btn btn-outline btn-sm" ${page.last ? 'disabled' : ''} id="next-page">${i18n.t('nextPage')} →</button>`;
+      document.getElementById('prev-page')?.addEventListener('click', () => { currentPage--; loadFeed(); });
+      document.getElementById('next-page')?.addEventListener('click', () => { currentPage++; loadFeed(); });
+    }
+
+    document.getElementById('filter-type').addEventListener('change', () => { currentPage = 0; loadFeed(); });
+
+    document.getElementById('new-post-btn').addEventListener('click', () => {
+      if (!communityId) { toast.warning(i18n.t('joinCommunityFirst')); return; }
+      const { close } = modal.open({
+        title: i18n.t('createAPost'),
+        bodyHtml: `
+          <div class="field"><label>${i18n.t('typeLabel')}</label>
+            <select class="input" id="post-type">${POST_TYPES.map((t) => `<option value="${t}">${i18n.enumLabel('PostType', t)}</option>`).join('')}</select>
+          </div>
+          <div class="ai-panel" style="margin-bottom:14px">
+            <span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('announcementAssistant')}</span>
+            <p class="text-xs text-muted" style="margin:4px 0 8px">${i18n.t('announcementAssistantHint')}</p>
+            <div class="row">
+              <input class="input" id="ai-notes" placeholder="${i18n.t('aiNotesPlaceholder')}" style="flex:1" />
+              <button type="button" class="btn btn-outline btn-sm" id="ai-draft-btn">${i18n.t('draftWithAi')}</button>
+            </div>
+            <div id="ai-draft-status" class="text-xs text-muted" style="margin-top:6px"></div>
+          </div>
+          <div class="field"><label>${i18n.t('titleOptional')}</label><input class="input" id="post-title" /></div>
+          <div class="field"><label>${i18n.t('contentLabel')}</label><textarea class="input" id="post-content" style="min-height:100px"></textarea></div>
+        `,
+        actions: [
+          { label: i18n.t('cancel'), className: 'btn btn-ghost' },
+          { label: i18n.t('publish'), className: 'btn btn-primary', onClick: async (done) => {
+              const content = document.getElementById('post-content').value.trim();
+              if (!content) { toast.warning(i18n.t('pleaseWriteSomething')); return; }
+              try {
+                await api.post(`/communities/${communityId}/posts`, {
+                  postType: document.getElementById('post-type').value,
+                  title: document.getElementById('post-title').value.trim() || null,
+                  content,
+                });
+                toast.success(i18n.t('postPublished'));
+                done();
+                loadFeed();
+              } catch (e) { toast.error(e.message); }
+            } },
+        ],
+      });
+
+      const draftBtn = document.getElementById('ai-draft-btn');
+      const statusEl = document.getElementById('ai-draft-status');
+      draftBtn.addEventListener('click', async () => {
+        const rawNotes = document.getElementById('ai-notes').value.trim();
+        if (!rawNotes) { toast.warning(i18n.t('typeRoughNotesFirst')); return; }
+        loading.setButtonLoading(draftBtn, true);
+        statusEl.textContent = i18n.t('drafting');
+        try {
+          const draft = await api.post(`/communities/${communityId}/posts/draft`, {
+            rawNotes,
+            postType: document.getElementById('post-type').value,
+          });
+          document.getElementById('post-title').value = draft.title;
+          document.getElementById('post-content').value = draft.content;
+          statusEl.textContent = draft.provider === 'MOCK' ? i18n.t('draftReadyFallback') : i18n.t('draftReadyReview');
+        } catch (e) {
+          statusEl.textContent = '';
+          toast.error(i18n.t('couldNotDraftWithAi') + e.message);
+        } finally {
+          loading.setButtonLoading(draftBtn, false);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Issues - Yaxın.az</title>
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/reset.css" />
+  <link rel="stylesheet" href="/css/typography.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/layout.css" />
+  <link rel="stylesheet" href="/css/animations.css" />
+  <link rel="stylesheet" href="/css/responsive.css" />
+  <link rel="stylesheet" href="/css/issue.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-shell"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/ui/toast.js"></script>
+  <script src="/js/ui/modal.js"></script>
+  <script src="/js/ui/loading.js"></script>
+  <script src="/js/ui/dropdown.js"></script>
+  <script src="/js/ui/form.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.4/stomp.min.js"></script>
+  <script src="/js/websocket.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/app.js"></script>
+
+  <script>
+    auth.requireAuth();
+    const pageEl = appShell.render({ activeNav: 'issues' });
+    let communityId = null;
+    const CATEGORIES = ['ELEVATOR','WATER','ELECTRICITY','GAS','HEATING','PARKING','SECURITY','NOISE','CLEANING','WASTE','INTERNET','BUILDING_DAMAGE','ROAD','LIGHTING','ANIMAL','ACCESSIBILITY','OTHER'];
+    const PRIORITIES = ['LOW','MEDIUM','HIGH','CRITICAL'];
+    const STATUSES = ['OPEN','ACKNOWLEDGED','IN_PROGRESS','WAITING_FOR_VENDOR','RESOLVED','CLOSED','REJECTED'];
+
+    function statusBadge(status) {
+      const map = { OPEN: 'neutral', ACKNOWLEDGED: 'primary', IN_PROGRESS: 'primary', WAITING_FOR_VENDOR: 'warning', RESOLVED: 'success', CLOSED: 'success', REJECTED: 'danger' };
+      return `<span class="badge badge-${map[status] || 'neutral'}">${i18n.enumLabel('IssueStatus', status)}</span>`;
+    }
+    function priorityBadge(priority) {
+      return `<span class="badge badge-priority-${priority.toLowerCase()}">${i18n.enumLabel('IssuePriority', priority)}</span>`;
+    }
+    function optionsHtml(values, group, selected) {
+      return `<option value="">${i18n.t('allLabel')}</option>` + values.map((v) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${i18n.enumLabel(group, v)}</option>`).join('');
+    }
+
+    pageEl.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1>${i18n.t('issuesTitle')}</h1>
+          <p>${i18n.t('issuesSubtitle')}</p>
+        </div>
+        <button class="btn btn-primary" id="report-btn">+ ${i18n.t('reportProblem')}</button>
+      </div>
+
+      <div class="filter-bar">
+        <select class="input" id="filter-status" aria-label="Filter by status">${optionsHtml(STATUSES, 'IssueStatus')}</select>
+        <select class="input" id="filter-priority" aria-label="Filter by priority">${optionsHtml(PRIORITIES, 'IssuePriority')}</select>
+        <select class="input" id="filter-category" aria-label="Filter by category">${optionsHtml(CATEGORIES, 'IssueCategory')}</select>
+        <label class="row text-sm"><input type="checkbox" id="filter-stale" /> ${i18n.t('staleOnly')}</label>
+        <label class="row text-sm"><input type="checkbox" id="filter-escalated" /> ${i18n.t('escalatedOnly')}</label>
+      </div>
+
+      <div id="issue-list" class="stack">${loading.skeletonRows(4, 2)}</div>
+      <div class="row" style="justify-content:center;margin-top:16px" id="pagination"></div>
+    `;
+
+    let currentPage = 0;
+
+    async function initCommunity() {
+      communityId = await appShell.ensureCommunityId();
+      if (!communityId) {
+        loading.emptyState(document.getElementById('issue-list'), {
+          icon: '🏘️', title: i18n.t('noCommunitySelected'),
+          message: i18n.t('joinCommunityFromDashboard'),
+          actionHtml: `<a href="/dashboard.html" class="btn btn-primary btn-sm">${i18n.t('goToDashboard')}</a>`,
+        });
+        return;
+      }
+      loadIssues();
+    }
+
+    async function loadIssues() {
+      if (!communityId) return;
+      const query = {
+        page: currentPage, size: 10, sort: 'createdAt,desc',
+        status: document.getElementById('filter-status').value || undefined,
+        priority: document.getElementById('filter-priority').value || undefined,
+        category: document.getElementById('filter-category').value || undefined,
+        stale: document.getElementById('filter-stale').checked ? true : undefined,
+        escalated: document.getElementById('filter-escalated').checked ? true : undefined,
+      };
+      const listEl = document.getElementById('issue-list');
+      listEl.innerHTML = loading.skeletonRows(4, 2);
+      try {
+        const page = await api.get(`/communities/${communityId}/issues`, { query });
+        if (!page.content.length) {
+          loading.emptyState(listEl, { icon: '✅', title: i18n.t('noIssuesFoundTitle'), message: i18n.t('noIssuesFoundMessage') });
+        } else {
+          listEl.innerHTML = page.content.map((issue) => `
+            <a href="/issue-detail.html?id=${issue.id}" class="card card-hover" style="display:flex;align-items:center;gap:16px">
+              <div style="flex:1">
+                <div class="row" style="margin-bottom:4px">
+                  <strong>${issue.title}</strong>
+                  ${issue.stale ? `<span class="badge badge-warning">${i18n.t('staleLabel')}</span>` : ''}
+                  ${issue.escalated ? `<span class="badge badge-danger">${i18n.t('escalatedLabel')}</span>` : ''}
+                </div>
+                <div class="text-sm text-secondary">${issue.buildingOrLocation || i18n.t('noLocationSpecified')} · ${new Date(issue.createdAt).toLocaleDateString()}</div>
+              </div>
+              <div class="text-sm text-secondary">👥 ${issue.supportCount}</div>
+              ${priorityBadge(issue.priority)}
+              ${statusBadge(issue.status)}
+            </a>`).join('');
+        }
+        renderPagination(page);
+      } catch (e) {
+        toast.error(i18n.t('unableToLoadIssues') + e.message);
+      }
+    }
+
+    function renderPagination(page) {
+      const el = document.getElementById('pagination');
+      if (page.totalPages <= 1) { el.innerHTML = ''; return; }
+      el.innerHTML = `
+        <button class="btn btn-outline btn-sm" ${page.first ? 'disabled' : ''} id="prev-page">← ${i18n.t('prevPage')}</button>
+        <span class="text-sm text-muted" style="margin:0 12px">${i18n.t('pageOf', { current: page.page + 1, total: page.totalPages })}</span>
+        <button class="btn btn-outline btn-sm" ${page.last ? 'disabled' : ''} id="next-page">${i18n.t('nextPage')} →</button>
+      `;
+      document.getElementById('prev-page')?.addEventListener('click', () => { currentPage--; loadIssues(); });
+      document.getElementById('next-page')?.addEventListener('click', () => { currentPage++; loadIssues(); });
+    }
+
+    ['filter-status', 'filter-priority', 'filter-category', 'filter-stale', 'filter-escalated'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', () => { currentPage = 0; loadIssues(); });
+    });
+
+    initCommunity();
+
+    /* ---------------- Smart Issue Reporting flow (spec section 98) ---------------- */
+
+    function AI_LOADING_MESSAGES() {
+      return [
+        i18n.t('aiLoadingUnderstanding'),
+        i18n.t('aiLoadingCategory'),
+        i18n.t('aiLoadingUrgency'),
+        i18n.t('aiLoadingSimilar'),
+        i18n.t('aiLoadingPreparing'),
+      ];
+    }
+
+    function openReportWizard() {
+      if (!communityId) { toast.warning(i18n.t('joinCommunityFirst')); return; }
+
+      const { close } = modal.open({
+        title: i18n.t('reportProblem'),
+        bodyHtml: `
+          <div id="wizard-step-input">
+            <div class="field">
+              <label for="report-text">${i18n.t('whatHappened')}</label>
+              <textarea class="input report-issue-textarea" id="report-text" placeholder="${i18n.t('describeProblemPlaceholder')}"></textarea>
+            </div>
+            <div class="field">
+              <label for="report-location">${i18n.t('buildingLocationOptional')}</label>
+              <input class="input" id="report-location" placeholder="${i18n.t('buildingLocationPlaceholder')}" />
+            </div>
+          </div>
+          <div id="wizard-step-loading" hidden class="ai-loading-card">
+            <div class="ai-spark-lg">✨</div>
+            <div class="ai-loading-steps" id="ai-loading-steps"></div>
+          </div>
+          <div id="wizard-step-result" hidden></div>
+        `,
+        actions: [
+          { label: i18n.t('cancel'), className: 'btn btn-ghost', onClick: (done) => done() },
+          { label: i18n.t('analyzeAndReport'), className: 'btn btn-ai', onClick: () => runAnalysis() },
+        ],
+      });
+
+      const modalActions = document.querySelector('.modal-actions');
+
+      async function runAnalysis() {
+        const text = document.getElementById('report-text').value.trim();
+        if (text.length < 10) { toast.warning(i18n.t('pleaseDescribeMore')); return; }
+        const location = document.getElementById('report-location').value.trim();
+
+        document.getElementById('wizard-step-input').hidden = true;
+        document.getElementById('wizard-step-loading').hidden = false;
+        modalActions.hidden = true;
+
+        const loadingMessages = AI_LOADING_MESSAGES();
+        const stepsEl = document.getElementById('ai-loading-steps');
+        stepsEl.innerHTML = loadingMessages.map((m, i) => `<div class="ai-loading-step" data-step="${i}">${m}</div>`).join('');
+        let stepIndex = 0;
+        const stepTimer = setInterval(() => {
+          document.querySelectorAll('.ai-loading-step').forEach((el, i) => {
+            el.classList.toggle('active', i === stepIndex);
+            el.classList.toggle('done', i < stepIndex);
+          });
+          stepIndex = Math.min(stepIndex + 1, loadingMessages.length - 1);
+        }, 850);
+
+        try {
+          const result = await api.post(`/communities/${communityId}/issues/analyze`, { rawText: text, buildingOrLocation: location || null });
+          clearInterval(stepTimer);
+          showResult(text, location, result);
+        } catch (e) {
+          clearInterval(stepTimer);
+          toast.error(e.message || i18n.t('aiUnavailableManualFallback'));
+          showManualFallback(text, location);
+        }
+      }
+
+      function showResult(rawText, location, result) {
+        document.getElementById('wizard-step-loading').hidden = true;
+        const resultEl = document.getElementById('wizard-step-result');
+        resultEl.hidden = false;
+
+        const analysis = result.analysis;
+        const duplicates = result.possibleDuplicates || [];
+
+        resultEl.innerHTML = `
+          <div class="ai-result-header">
+            <span class="ai-label"><span class="ai-spark">✨</span> ${i18n.t('aiUnderstoodReport')}</span>
+            ${analysis.provider === 'MOCK' ? `<span class="text-xs text-muted">${i18n.t('aiUsedFallbackReviewCarefully')}</span>` : ''}
+          </div>
+          <div class="field">
+            <label for="result-title">${i18n.t('titleLabel')}</label>
+            <input class="input" id="result-title" value="${escapeAttr(analysis.title)}" />
+          </div>
+          <div class="ai-result-grid">
+            <div class="ai-result-field">
+              <div class="label">${i18n.t('categoryLabel')}</div>
+              <select class="input" id="result-category">${CATEGORIES.map((c) => `<option value="${c}" ${c === analysis.category ? 'selected' : ''}>${i18n.enumLabel('IssueCategory', c)}</option>`).join('')}</select>
+            </div>
+            <div class="ai-result-field">
+              <div class="label">${i18n.t('priorityLabel')}</div>
+              <select class="input" id="result-priority">${PRIORITIES.map((p) => `<option value="${p}" ${p === analysis.prioritySuggestion ? 'selected' : ''}>${i18n.enumLabel('IssuePriority', p)}</option>`).join('')}</select>
+            </div>
+            <div class="ai-result-field">
+              <div class="label">${i18n.t('affectedGroupLabel')}</div>
+              <div class="text-sm" style="padding-top:8px">${(analysis.affectedGroups || []).join(', ') || 'ALL_RESIDENTS'}</div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="result-summary">${i18n.t('aiSummaryLabel')}</label>
+            <textarea class="input" id="result-summary">${escapeAttr(analysis.summary)}</textarea>
+          </div>
+          <div class="row wrap" style="gap:6px">
+            ${(analysis.tags || []).map((t) => `<span class="badge badge-neutral">${t}</span>`).join('')}
+          </div>
+          ${duplicates.length ? duplicates.map((d) => `
+            <div class="duplicate-card">
+              <strong>${i18n.t('possibleExistingIssue')}</strong>
+              <p style="margin:6px 0"><a class="link" href="/issue-detail.html?id=${d.issueId}" target="_blank">${d.title}</a></p>
+              <p class="text-sm"><span class="affected-count">${d.supportCount}</span> ${i18n.t('residentsAffected')} · ${d.status}</p>
+              <div class="row" style="margin-top:8px">
+                <button class="btn btn-ai btn-sm" data-follow-id="${d.issueId}">${i18n.t('iHaveThisProblemToo')}</button>
+                <a href="/issue-detail.html?id=${d.issueId}" target="_blank" class="btn btn-outline btn-sm">${i18n.t('viewIssue')}</a>
+              </div>
+            </div>`).join('') : ''}
+        `;
+
+        modalActions.hidden = false;
+        modalActions.innerHTML = '';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn btn-ghost';
+        cancelBtn.textContent = i18n.t('cancel');
+        cancelBtn.addEventListener('click', close);
+        const createBtn = document.createElement('button');
+        createBtn.className = 'btn btn-primary';
+        createBtn.textContent = i18n.t('createNewIssueAnyway');
+        createBtn.addEventListener('click', () => submitIssue({
+          title: document.getElementById('result-title').value,
+          description: rawText,
+          category: document.getElementById('result-category').value,
+          priority: document.getElementById('result-priority').value,
+          buildingOrLocation: location || null,
+          aiSummary: document.getElementById('result-summary').value,
+        }, createBtn, close));
+        modalActions.appendChild(cancelBtn);
+        modalActions.appendChild(createBtn);
+
+        resultEl.querySelectorAll('[data-follow-id]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            try {
+              await api.post(`/issues/${btn.dataset.followId}/support`);
+              toast.success(i18n.t('nowFollowingIssue'));
+              close();
+              loadIssues();
+            } catch (e) {
+              toast.error(e.message);
+            }
+          });
+        });
+      }
+
+      function showManualFallback(rawText, location) {
+        document.getElementById('wizard-step-loading').hidden = true;
+        const resultEl = document.getElementById('wizard-step-result');
+        resultEl.hidden = false;
+        resultEl.innerHTML = `
+          <p class="text-sm" style="margin-bottom:12px">${i18n.t('aiUnavailableManualFallback')}</p>
+          <div class="field"><label for="manual-title">${i18n.t('titleLabel')}</label><input class="input" id="manual-title" /></div>
+          <div class="field"><label for="manual-category">${i18n.t('categoryLabel')}</label>
+            <select class="input" id="manual-category">${CATEGORIES.map((c) => `<option value="${c}">${i18n.enumLabel('IssueCategory', c)}</option>`).join('')}</select>
+          </div>
+        `;
+        modalActions.hidden = false;
+        modalActions.innerHTML = '';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn btn-ghost';
+        cancelBtn.textContent = i18n.t('cancel');
+        cancelBtn.addEventListener('click', close);
+        const submitBtn = document.createElement('button');
+        submitBtn.className = 'btn btn-primary';
+        submitBtn.textContent = i18n.t('submitIssue');
+        submitBtn.addEventListener('click', () => submitIssue({
+          title: document.getElementById('manual-title').value || 'Community issue reported',
+          description: rawText,
+          category: document.getElementById('manual-category').value,
+          priority: 'MEDIUM',
+          buildingOrLocation: location || null,
+        }, submitBtn, close));
+        modalActions.appendChild(cancelBtn);
+        modalActions.appendChild(submitBtn);
+      }
+
+      async function submitIssue(payload, button, closeModal) {
+        loading.setButtonLoading(button, true);
+        try {
+          await api.post(`/communities/${communityId}/issues`, payload);
+          toast.success(i18n.t('issueReported'));
+          closeModal();
+          loadIssues();
+        } catch (e) {
+          toast.error(e.message);
+          loading.setButtonLoading(button, false);
+        }
+      }
+    }
+
+    function escapeAttr(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML.replace(/"/g, '&quot;');
+    }
+
+    document.getElementById('report-btn').addEventListener('click', openReportWizard);
+    if (new URLSearchParams(location.search).get('report') === '1') openReportWizard();
+  </script>
+</body>
+</html>

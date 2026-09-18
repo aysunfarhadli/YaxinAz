@@ -1,0 +1,36 @@
+@keyframes fade-in { to { opacity: 1; } }
+
+@keyframes modal-in {
+  to { transform: scale(1); }
+}
+
+@keyframes toast-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ai-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.15); }
+}
+
+@keyframes fade-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in { animation: fade-slide-up var(--transition-base) both; }
+
+@keyframes count-up-flash {
+  0% { color: var(--color-primary); }
+  100% { color: inherit; }
+}
